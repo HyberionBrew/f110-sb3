@@ -85,7 +85,7 @@ def main():
     eval_env = RandomF1TenthMap(eval_env, 500)
     eval_env.seed(np.random.randint(pow(2, 31) - 1))"""
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") #RuntimeError: CUDA error: out of memory whenever I use gpu
-    model = PPO("MlpPolicy", envs,  learning_rate=linear_schedule(0.0003), gamma=0.99, gae_lambda=0.95, verbose=1, device='cpu')
+    model = PPO("MlpPolicy", envs,  learning_rate=linear_schedule(0.0003), gamma=0.99, gae_lambda=0.95, verbose=1, device=device)
     eval_callback = EvalCallback(envs, best_model_save_path='./train_test/',
                              log_path='./train_test/', eval_freq=5000,
                              deterministic=True, render=False)
@@ -105,6 +105,7 @@ def main():
     #          #
 
     # create evaluation environment (same as train environment in this case)
+
     eval_env = gym.make("f110_gym:f110-v0",
                         map=MAP_PATH,
                         map_ext=MAP_EXTENSION,

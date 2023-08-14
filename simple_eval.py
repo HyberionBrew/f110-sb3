@@ -1,4 +1,4 @@
-import gym
+import gymnasium as gym
 import time
 import numpy as np
 import torch
@@ -14,14 +14,14 @@ from code.manus_callbacks import SaveOnBestTrainingRewardCallback
 from code.schedulers import linear_schedule
 
 MIN_EVAL_EPISODES = 100
-MAP_PATH = "./f1tenth_racetracks/Silverstone/Silverstone_map"
-MAP_EXTENSION = ".png"
+MAP_PATH = "./f1tenth_racetracks/maps-felix_test2/infsaal"
+MAP_EXTENSION = ".pgm"
 
 eval_env = gym.make("f110_gym:f110-v0",
-                        map=MAP_PATH,
-                        map_ext=MAP_EXTENSION,
-                        num_agents=1)
-
+                        config = dict(map="Infsaal",
+                        num_agents=1),
+                        render_mode="human")
+print(eval_env.map_name)
 # wrap evaluation environment
 eval_env = F110_Wrapped(eval_env)
 #eval_env = ThrottleMaxSpeedReward(eval_env,0,1,2.5,2.5)
@@ -31,6 +31,9 @@ model = PPO.load("./train_test/best_model")
 
 # simulate a few episodes and render them, ctrl-c to cancel an episode
 episode = 0
+obs = eval_env.reset()
+eval_env.render()
+print("---****----")
 while episode < MIN_EVAL_EPISODES:
     try:
         episode += 1

@@ -15,12 +15,12 @@
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# AUTHORS OR COPYRIGHT HOLDERS BE RALIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import gym
+import gymnasium as gym
 import numpy as np
 
 from gym import spaces
@@ -50,6 +50,8 @@ class F110_Wrapped(gym.Wrapper):
 
     def __init__(self, env):
         super().__init__(env)
+        print(env.num_agents)
+        print("-------")
 
         # normalised action space, steer and speed
         self.action_space = spaces.Box(low=np.array(
@@ -85,7 +87,7 @@ class F110_Wrapped(gym.Wrapper):
     def step(self, action):
         # convert normalised actions (from RL algorithms) back to actual actions for simulator
         action_convert = self.un_normalise_actions(action)
-        observation, _, done, info = self.env.step(np.array([action_convert]))
+        observation, _, done,_, info = self.env.step(np.array([action_convert]))
 
         self.step_count += 1
 
@@ -187,7 +189,10 @@ class F110_Wrapped(gym.Wrapper):
         t = -np.random.uniform(max(-rand_offset * np.pi / 2, 0) - np.pi / 2,
                                min(-rand_offset * np.pi / 2, 0) + np.pi / 2) + direction
         # reset car with chosen pose
-        observation, _, _, _ = self.env.reset(np.array([[x, y, t]]))
+        ops = dict(poses=np.array([[x, y, t]]))
+        print(ops)
+        print(ops["poses"].shape)
+        observation, _ = self.env.reset(options = ops)
         # reward, done, info can't be included in the Gym format
         return self.normalise_observations(observation['scans'][0])
 
@@ -259,7 +264,7 @@ class RandomMap(gym.Wrapper):
         direction = np.arctan2(next_xy[1] - start_xy[1],
                                next_xy[0] - start_xy[0])
         # reset environment
-        return self.env.reset(start_xy=start_xy, direction=direction)
+        return self.env.reset(options=dict(poses=np.array([start_xy[0],start_xy[1],direction])))
 
     def step(self, action):
         # increment class step counter

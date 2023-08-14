@@ -21,14 +21,23 @@
 # SOFTWARE.
 
 # choose which SB3 image to use, CPU or GPU
-ARG PARENT_IMAGE=stablebaselines/rl-baselines3-zoo-cpu
-
-# base the rest of the container off the chosen Stable Baselines 3 image
-FROM $PARENT_IMAGE
+FROM nvidia/cuda:11.1.1-cudnn8-devel-ubuntu20.04
 
 RUN DEBIAN_FRONTEND="noninteractive" apt-get update --fix-missing && \
     DEBIAN_FRONTEND="noninteractive" apt-get install -y \
     python3-dev python3-pip
+
+# Set environment variable for non-interactive installations
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update package list and install SDL2 dependencies
+RUN apt-get update && apt-get install -y \
+    libsdl2-dev \
+    libsdl2-image-dev \
+    libsdl2-mixer-dev \
+    libsdl2-ttf-dev \
+    libfreetype6-dev
+
 
 RUN DEBIAN_FRONTEND="noninteractive" apt-get install -y \
     nano \
@@ -41,6 +50,7 @@ RUN DEBIAN_FRONTEND="noninteractive" apt-get install -y \
     vim
 
 RUN pip3 install --upgrade pip
+RUN pip3 install --upgrade requests
 
 RUN pip3 install \
     numpy \
@@ -49,22 +59,17 @@ RUN pip3 install \
     Pillow \
     gym \
     pyyaml \
-    pyglet \
+    pyglet==1.5.27\
     shapely \
     wandb \
     pylint
 
-RUN conda install -y autopep8
+RUN pip3 install torch
+RUN pip3 install stable-baselines3[extra]
+# RUN pip3 install rl_zoo3
 
-
-# add a user (kinda just a hack to make the terminal look better)
-RUN useradd -m formula -u 1000 -g 0
-
-# set home directory
+RUN apt-get install -y x11-apps
 ENV HOME /home/formula
+WORKDIR /home/formula/F1Tenth-RL
 
-# open container in home folder
-WORKDIR /home/formula/Team-1
-
-# opens terminal when container starts (also overrides SB3 Xvfb setup)
 ENTRYPOINT ["/bin/bash"]
