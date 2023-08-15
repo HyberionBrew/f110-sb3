@@ -23,7 +23,7 @@
 import gymnasium as gym
 import numpy as np
 
-from gym import spaces
+from gymnasium import spaces
 from pathlib import Path
 
 from code.random_trackgen import create_track, convert_track
@@ -87,7 +87,7 @@ class F110_Wrapped(gym.Wrapper):
     def step(self, action):
         # convert normalised actions (from RL algorithms) back to actual actions for simulator
         action_convert = self.un_normalise_actions(action)
-        observation, _, done,_, info = self.env.step(np.array([action_convert]))
+        observation, _, done, truncated , info = self.env.step(np.array([action_convert]))
 
         self.step_count += 1
 
@@ -160,14 +160,17 @@ class F110_Wrapped(gym.Wrapper):
             if self.env.lap_counts[0] > 1:
                 reward += 1
                 self.env.lap_counts[0] = 0"""
-
-        return self.normalise_observations(observation['scans'][0]), reward, bool(done), info
-
-    def reset(self, start_xy=None, direction=None):
+        #print(done)
+        #print(truncated)
+        return self.normalise_observations(observation['scans'][0]), reward, bool(done), truncated, info
+    
+    def reset(self, seed=None, options=dict(poses=[(None),None])): #start_xy=None, direction=None):
         # should start off in slightly different position every time
         # position car anywhere along line from wall to wall facing
         # car will never face backwards, can face forwards at an angle
-
+        # print("reset")
+        start_xy = options["poses"][0]
+        direction = options["poses"][1]
         # start from origin if no pose input
         if start_xy is None:
             start_xy = np.zeros(2)
@@ -190,12 +193,19 @@ class F110_Wrapped(gym.Wrapper):
                                min(-rand_offset * np.pi / 2, 0) + np.pi / 2) + direction
         # reset car with chosen pose
         ops = dict(poses=np.array([[x, y, t]]))
-        print(ops)
-        print(ops["poses"].shape)
-        observation, _ = self.env.reset(options = ops)
+        #print(ops)
+        #print(ops["poses"].shape)
+        observation, info = self.env.reset(options = ops)
+        #observation = dict()
+        #observation['scans'] = [[0,1]]
         # reward, done, info can't be included in the Gym format
-        return self.normalise_observations(observation['scans'][0])
-
+        #print(self.observation_space)
+        #print(observation["scans"][0])
+        #print(observation["scans"][0].dtype)
+        # to float 64
+        observation["scans"][0] = np.array(observation["scans"][0], dtype=np.float64)
+        return self.normalise_observations(observation['scans'][0]), info
+    
     def un_normalise_actions(self, actions):
         # convert actions from range [-1, 1] to normal steering/speed range
         steer = convert_range(actions[0], [-1, 1], [self.s_min, self.s_max])
@@ -219,12 +229,11 @@ class F110_Wrapped(gym.Wrapper):
         np.random.seed(self.current_seed)
         print(f"Seed -> {self.current_seed}")
 
+    """
 
 class RandomMap(gym.Wrapper):
-    """
-    Generates random maps at chosen intervals, when resetting car,
-    and positions car at random point around new track
-    """
+    #Generates random maps at chosen intervals, when resetting car,
+    #and positions car at random point around new track
 
     # stop function from trying to generate map after multiple failures
     MAX_CREATE_ATTEMPTS = 20
@@ -288,11 +297,13 @@ class RandomMap(gym.Wrapper):
                     f.unlink()
                 except:
                     pass
+"""
 
+"""
 class RandomF1TenthMap(gym.Wrapper):
-    """
-    Places the car in a random map from F1Tenth
-    """
+ 
+    #Places the car in a random map from F1Tenth
+    
 
     # stop function from trying to generate map after multiple failures
     MAX_CREATE_ATTEMPTS = 20
@@ -349,6 +360,7 @@ class RandomF1TenthMap(gym.Wrapper):
                 except:
                     pass
 
+    """
 
 class ThrottleMaxSpeedReward(gym.RewardWrapper):
     """

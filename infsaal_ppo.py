@@ -29,7 +29,7 @@ environment while visualising it
 #pip install --user -e gym/
 #in the f1tenth_gym folder
 
-import gym
+import gymnasium as gym
 import time
 import numpy as np
 import torch
@@ -62,14 +62,14 @@ def main():
     def wrap_env():
         # starts F110 gym
         env = gym.make("f110_gym:f110-v0",
-                       map=MAP_PATH,
-                       map_ext=MAP_EXTENSION,
-                       num_agents=1)
+                        config = dict(map="Infsaal",
+                        num_agents=1),
+                        render_mode="human")
         # wrap basic gym with RL functions
         env = F110_Wrapped(env)
         #env = RandomMap(env, 3000)
         # env = RandomF1TenthMap(env, 3000)
-        #env = ThrottleMaxSpeedReward(env,0,1,2.5,2.5)
+        # env = ThrottleMaxSpeedReward(env,0,1,2.5,2.5)
         env = ThrottleMaxSpeedReward(env, 0, int(0.75 * TRAIN_STEPS), 2.5) #this is what eoin used in the code on weights and biases
         return env
 
@@ -85,6 +85,7 @@ def main():
     eval_env = RandomF1TenthMap(eval_env, 500)
     eval_env.seed(np.random.randint(pow(2, 31) - 1))"""
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") #RuntimeError: CUDA error: out of memory whenever I use gpu
+    print(f"Using device: {device}")
     model = PPO("MlpPolicy", envs,  learning_rate=linear_schedule(0.0003), gamma=0.99, gae_lambda=0.95, verbose=1, device=device)
     eval_callback = EvalCallback(envs, best_model_save_path='./train_test/',
                              log_path='./train_test/', eval_freq=5000,

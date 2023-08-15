@@ -1,0 +1,6 @@
+torch
+stable-baselines3[extra]
+pyglet==1.5.27
+shapely
+wandb
+pylint

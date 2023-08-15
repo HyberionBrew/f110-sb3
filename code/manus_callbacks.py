@@ -1,6 +1,6 @@
 import os
 
-import gym
+import gymnasium as gym
 import time
 import wandb
 import numpy as np

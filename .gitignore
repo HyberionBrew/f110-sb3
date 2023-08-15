@@ -5,6 +5,7 @@
 .empty
 __pycache__
 
+f1tenth_gym/
 # config file for VS Code settings / IDE stuff
 .vscode
 .idea/
