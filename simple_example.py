@@ -45,7 +45,7 @@ from code.manus_callbacks import SaveOnBestTrainingRewardCallback
 from code.schedulers import linear_schedule
 
 TRAIN_DIRECTORY = "./train"
-TRAIN_STEPS = 1.5 * np.power(10, 5)    # for reference, it takes about one sec per 500 steps
+TRAIN_STEPS = 1.5 * np.power(10, 6)    # for reference, it takes about one sec per 500 steps
 SAVE_CHECK_FREQUENCY = int(TRAIN_STEPS / 10)
 MIN_EVAL_EPISODES = 100
 NUM_PROCESS = 4

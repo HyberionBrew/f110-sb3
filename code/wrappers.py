@@ -26,14 +26,177 @@ import numpy as np
 from gymnasium import spaces
 from pathlib import Path
 
-from code.random_trackgen import create_track, convert_track
+from f110_gym.envs.track import Track
 
-mapno = ["Austin","BrandsHatch","Budapest","Catalunya","Hockenheim","IMS","Melbourne","MexicoCity","Montreal","Monza","MoscowRaceway",
-         "Nuerburgring","Oschersleben","Sakhir","SaoPaulo","Sepang","Shanghai","Silverstone","Sochi","Spa","Spielberg","YasMarina","Zandvoort"]
+from typing import Tuple
+from numba import njit
+import math
+import collections
 
-randmap = mapno[0]
-globwaypoints = np.genfromtxt(f"./f1tenth_racetracks/{randmap}/{randmap}_centerline.csv", delimiter=',')
+from gymnasium.spaces import Box
+# from code.random_trackgen import create_track, convert_track
 
+#mapno = ["Austin","BrandsHatch","Budapest","Catalunya","Hockenheim","IMS","Melbourne","MexicoCity","Montreal","Monza","MoscowRaceway",
+#         "Nuerburgring","Oschersleben","Sakhir","SaoPaulo","Sepang","Shanghai","Silverstone","Sochi","Spa","Spielberg","YasMarina","Zandvoort"]
+
+
+
+
+
+
+class VelocityObservationSpace(gym.ObservationWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        self.observation_space['linear_vels_x'] = Box(shape=(1,), low=-20, high=20)
+        self.observation_space['linear_vels_y'] = Box(shape=(1,), low=-20, high=20)
+        # self.observation_space['angular_vels_z'] = Box(shape=(1,), low=-20, high=20)
+    def observation(self, obs):
+        # clip obs between low and high
+        obs['linear_vels_x'] = np.clip(obs['linear_vels_x'], -20, 20)
+        obs['linear_vels_y'] = np.clip(obs['linear_vels_y'], -20, 20)
+        # obs['angular_vels_z'] = np.clip(obs['angular_vels_z'], -20, 20)
+        # obs['linear_vels_y'] = np.clip(obs['linear_vels_y'], -20, 20)
+        return obs
+
+class FrameSkip(gym.Wrapper):
+    def __init__(self, env, skip: int):
+        self.frame_skip = skip
+        super().__init__(env)
+
+    def step(self, action):
+        R = 0
+        for t in range(self.frame_skip):
+            obs, reward, done, truncate, info = self.env.step(action)
+            R += reward
+            if done:
+                break
+        return obs, R, done, truncate, info
+
+
+class NormalizeVelocityObservation(gym.ObservationWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+
+    def observation(self, obs):
+        assert 'linear_vels_x' in obs
+        low = self.observation_space['linear_vels_x'].low
+        high = self.observation_space['linear_vels_x'].high
+        # clip obs between low and high
+        obs['linear_vels_x'] = np.clip(obs['linear_vels_x'], low, high)
+        # normalise between -1 and 1
+        obs['linear_vels_x'] = 2 * ((obs['linear_vels_x'] - low) / (high - low)) - 1
+
+        obs['linear_vels_y'] = np.clip(obs['linear_vels_y'], low, high)
+        # normalise between -1 and 1
+        obs['linear_vels_y'] = 2 * ((obs['linear_vels_y'] - low) / (high - low)) - 1
+        
+        #obs['angular_vels_z'] = np.clip(obs['angular_vels_z'], low, high)
+        # normalise between -1 and 1
+        # obs['angular_vels_z'] = 2 * ((obs['angular_vels_z'] - low) / (high - low)) - 1
+        
+        assert(not(np.isnan(obs['linear_vels_y'])))
+        assert(not(np.isnan(obs['linear_vels_x'])))
+        return obs
+
+
+class LidarOccupancyObservation(gym.ObservationWrapper):
+    def __init__(self, env, max_range: float = 10.0, resolution: float = 0.08, degree_fow: int = 270):
+        super(LidarOccupancyObservation, self).__init__(env)
+        self._max_range = max_range
+        self._resolution = resolution
+        self._degree_fow = degree_fow
+        self._n_bins = math.ceil(2 * self._max_range / self._resolution)
+        # extend observation space
+        obs_dict = collections.OrderedDict()
+        for k, space in self.observation_space.spaces.items():
+            obs_dict[k] = space
+        obs_dict['lidar_occupancy'] = gym.spaces.Box(low=0, high=255, dtype=np.uint8,
+                                                     shape=(1, self._n_bins, self._n_bins))
+        self.observation_space = gym.spaces.Dict(obs_dict)
+
+    @staticmethod
+    @njit(fastmath=False, cache=True)
+    def _polar2cartesian(dist, angle, n_bins, res):
+        occupancy_map = np.zeros(shape=(n_bins, n_bins), dtype=np.uint8)
+        xx = dist * np.cos(angle)
+        yy = dist * np.sin(angle)
+        #print(angle.shape)
+        #print(dist.shape)
+        #print(xx.shape)
+
+        xi, yi = np.floor(xx / res), np.floor(yy / res)
+        for px, py in zip(xi, yi):
+            row = min(max(n_bins // 2 + py, 0), n_bins - 1)
+            col = min(max(n_bins // 2 + px, 0), n_bins - 1)
+            if row < n_bins - 1 and col < n_bins - 1:
+                # in this way, then >max_range we dont fill the occupancy map in order to let a visible gap
+                occupancy_map[int(row), int(col)] = 255
+        return np.expand_dims(occupancy_map, 0)
+
+    def observation(self, observation):
+        assert 'scans' in observation
+        scan = observation['scans'][0]
+        scan_angles = self.sim.agents[0].scan_angles  # assumption: all the lidars are equal in ang. spectrum
+        # reduce fow
+        mask = abs(scan_angles) <= np.deg2rad(self._degree_fow / 2.0)  # 1 for angles in fow, 0 for others
+        scan = np.where(mask, scan, np.Inf)
+        observation['lidar_occupancy'] = self._polar2cartesian(scan, scan_angles, self._n_bins, self._resolution)
+        # print(observation["lidar_occupancy"])
+        return observation
+# randmap = mapno[0]
+# globwaypoints = np.genfromtxt(f"./f1tenth_racetracks/{randmap}/{randmap}_centerline.csv", delimiter=',')
+class Progress:
+    def __init__(self, track: Track) -> None:
+        # 
+        xs = track.centerline.xs
+        ys = track.centerline.ys
+        self.centerline = np.stack((xs, ys), axis=-1)
+        # append first point to end to make loop
+        self.centerline = np.vstack((self.centerline, self.centerline[0]))
+
+        self.segment_vectors = np.diff(self.centerline, axis=0)
+        # print(segment_vectors.shape)
+        self.segment_lengths = np.linalg.norm(self.segment_vectors, axis=1)
+        
+        # Extend segment lengths to compute cumulative distance
+        self.cumulative_lengths = np.hstack(([0], np.cumsum(self.segment_lengths)))
+        #print(self.centerline)
+        #print(self.centerline.shape)
+        #print("***********")
+
+    def distance_along_centerline_np(self, pose_points):
+        assert len(pose_points.shape) == 2 and pose_points.shape[1] == 2
+
+        # centerpoints = np.array(centerpoints)
+        #print(self.centerline.shape)
+        #print(centerpoints[:-1])
+        #print(pose_points)
+        #print(".....")
+        # assert pose points must be Nx2
+        pose_points = np.array(pose_points)
+        #print(pose_points.shape)
+
+        def projected_distance(pose):
+            rel_pose = pose - self.centerline[:-1]
+            t = np.sum(rel_pose * self.segment_vectors, axis=1) / np.sum(self.segment_vectors**2, axis=1)
+            t = np.clip(t, 0, 1)
+            projections = self.centerline[:-1] + t[:, np.newaxis] * self.segment_vectors
+            distances = np.linalg.norm(pose - projections, axis=1)
+            
+            closest_idx = np.argmin(distances)
+            #print(closest_idx)
+            return self.cumulative_lengths[closest_idx] + self.segment_lengths[closest_idx] * t[closest_idx]
+        
+        return np.array([projected_distance(pose) for pose in pose_points])
+    
+    def get_progress(self, pose: Tuple[float, float]):
+        progress =  self.distance_along_centerline_np(pose)
+        # print(self.cumulative_lengths.shape)
+        # print(self.cumulative_lengths[-1])
+        progress = progress / (self.cumulative_lengths[-1] + self.segment_lengths[-1])
+        # clip between 0 and 1 (it can sometimes happen that its slightly above 1)
+        return np.clip(progress, 0, 1)
+    
 def convert_range(value, input_range, output_range):
     # converts value(s) from range to another range
     # ranges ---> [min, max]
@@ -41,6 +204,115 @@ def convert_range(value, input_range, output_range):
     in_range = in_max - in_min
     out_range = out_max - out_min
     return (((value - in_min) * out_range) / in_range) + out_min
+"""
+class FixSpeedControl(gym.ActionWrapper):
+"""
+    #reduce original problem to control only the steering angle
+"""
+
+    def __init__(self, env, fixed_speed: float = 2.0):
+        super(FixSpeedControl, self).__init__(env)
+        self._fixed_speed = fixed_speed
+        print(self.action_space)
+        self.action_space = #gym.spaces.Dict({'steering': self.env.action_space['steering']})
+
+    def action(self, action):
+        assert 'steering' in action
+        new_action = {'steering': action['steering'], 'velocity': self._fixed_speed}
+        return new_action
+"""
+
+class FixSpeedControl(gym.ActionWrapper):
+    """
+    reduce original problem to control only the steering angle
+    """
+
+    def __init__(self, env, fixed_speed: float = 2.0):
+        super(FixSpeedControl, self).__init__(env)
+        self._fixed_speed = fixed_speed
+        # print(self.env.action_space)
+        low = np.array([self.sim.params['s_min']]).astype(np.float32)
+        high = np.array([self.sim.params['s_max']]).astype(np.float32)
+        self.action_space = gym.spaces.Box(low=low, high=high, shape=(1,), dtype=np.float32)
+
+    def action(self, action):
+        assert len(action.shape) == 1
+        # print(action)
+        new_action = np.array([[action[0], self._fixed_speed]])
+        # print(new_action)
+        return new_action
+
+
+class FlattenAction(gym.ActionWrapper):
+    """Action wrapper that flattens the action."""
+
+    def __init__(self, env):
+        super(FlattenAction, self).__init__(env)
+        self.action_space = gym.spaces.utils.flatten_space(self.env.action_space)
+
+    def action(self, action):
+        flatten = gym.spaces.utils.unflatten(self.env.action_space, action)
+        return flatten
+
+    def reverse_action(self, action):
+        return gym.spaces.utils.flatten(self.env.action_space, action)
+    
+class ProgressReward(gym.Wrapper):
+    def __init__(self, env, collision_penalty = 10.0):
+        super().__init__(env)
+        self.progress_tracker = Progress(self.env.track)
+        self.current_progress = None
+        self.collision_penalty = collision_penalty
+
+    def step(self, action):
+        observation, reward, done, truncated, info = self.env.step(action)
+        pose = np.array([observation['poses_x'][0], observation['poses_y'][0]])
+        pose = pose[np.newaxis, :]
+        new_progress = self.progress_tracker.get_progress(pose)[0]
+        delta_progress = 0
+        # in this case we just crossed the finishing line!
+        if (new_progress - self.current_progress) < -0.5:
+            delta_progress = (new_progress + 1) - self.current_progress
+        else:
+            delta_progress = new_progress - self.current_progress
+        
+        delta_progress = max(delta_progress, 0)
+        delta_progress *= 100
+        self.current_progress = new_progress
+        reward = delta_progress
+        if observation['collisions'][0]:
+            reward = -10
+
+        return observation, reward, done, truncated, info
+
+
+    def reset(self, seed=None, options=None):
+        observation, info = self.env.reset(seed=seed, options=options)
+        pose = np.array([observation['poses_x'][0], observation['poses_y'][0]])
+        pose = pose[np.newaxis, :]
+        self.current_progress = self.progress_tracker.get_progress(pose)[0]
+        return observation, info
+
+class SpinningReset(gym.Wrapper):
+    def __init__(self, env, maxTheta):
+        super().__init__(env)
+        self.maxTheta = maxTheta
+    def step(self,action):
+        observation, ac, done, truncated , info = self.env.step(action)
+        if abs(observation['poses_theta'][0]) > self.maxTheta:
+            done = True
+        return observation, ac, done, truncated, info
+    
+class MinSpeedReset(gym.Wrapper):
+    def __init__(self, env, minSpeed):
+        super().__init__(env)
+        self.minSpeed = minSpeed
+    def step(self,action):
+        observation, ac, done, truncated , info = self.env.step(action)
+        print(observation['linear_vels_x'])
+        if abs(observation['linear_vels_x']) + abs(observation['linear_vels_y']) < self.maxTheta:
+            done = True
+        return observation, ac, done, truncated, info
 
 class F110_Wrapped(gym.Wrapper):
     """
@@ -48,18 +320,25 @@ class F110_Wrapped(gym.Wrapper):
     for only one car, but should be expanded to handle multi-agent scenarios
     """
 
-    def __init__(self, env):
+    def __init__(self, env, fixed_speed = True, max_speed=1.0):
         super().__init__(env)
-        print(env.num_agents)
-        print("-------")
-
+        self.progress_tracker = Progress(self.env.track)
+        self.current_progress = None
+        # print("init")
+        #print(env.num_agents)
+        # print("-------")
+        self.fixed_speed = fixed_speed
         # normalised action space, steer and speed
-        self.action_space = spaces.Box(low=np.array(
-            [-1.0, -1.0]), high=np.array([1.0, 1.0]), dtype=np.float)
-
+        if self.fixed_speed:
+            self.action_space = spaces.Box(low=np.array(
+                [-1.0, -1.0]), high=np.array([1.0,1.0]), dtype=np.float32)
+        else:
+            self.action_space = spaces.Box(low=np.array(
+                [-1.0, -1.0]), high=np.array([1.0, 1.0]), dtype=np.float32)
+        print(self.action_space)
         # normalised observations, just take the lidar scans
         self.observation_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(1080,), dtype=np.float)
+            low=-1.0, high=1.0, shape=(1080,), dtype=np.float32)
 
         # store allowed steering/speed/lidar ranges for normalisation
         self.s_min = self.env.params['s_min']
@@ -72,7 +351,7 @@ class F110_Wrapped(gym.Wrapper):
         # store car dimensions and some track info
         self.car_length = self.env.params['length']
         self.car_width = self.env.params['width']
-        self.track_width = 3.2  # ~= track width, see random_trackgen.py
+        self.track_width = 0.2  # ~= track width, see random_trackgen.py
 
         # radius of circle where car can start on track, relative to a centerpoint
         self.start_radius = (self.track_width / 2) - \
@@ -82,7 +361,7 @@ class F110_Wrapped(gym.Wrapper):
 
         # set threshold for maximum angle of car, to prevent spinning
         self.max_theta = 100
-        self.count = 0
+        self.lap = 0
 
     def step(self, action):
         # convert normalised actions (from RL algorithms) back to actual actions for simulator
@@ -98,32 +377,51 @@ class F110_Wrapped(gym.Wrapper):
         vel_magnitude = np.linalg.norm(
             [observation['linear_vels_x'][0], observation['linear_vels_y'][0]])
         reward = vel_magnitude #/10 maybe include if speed is having too much of an effect
-
-        # reward function that returns percent of lap left, maybe try incorporate speed into the reward too
-        #waypoints = np.genfromtxt(f"./f1tenth_racetracks/{randmap}/{randmap}_centerline.csv", delimiter=',')
-
-        if self.count < len(globwaypoints):
-            wx, wy = globwaypoints[self.count][:2]
-            X, Y = observation['poses_x'][0], observation['poses_y'][0]
-            dist = np.sqrt(np.power((X - wx), 2) + np.power((Y - wy), 2))
-            #print("Dist:", dist, " to waypoint: ", self.count + 1)
-            if dist > 2:
-                self.count += 1
-                complete = (self.count/len(globwaypoints)) * 0.5
-                #print("Percent complete: ", complete)
-                reward += complete
+        
+        pose = np.array([observation['poses_x'][0], observation['poses_y'][0]])
+        pose = pose[np.newaxis, :]
+        new_progress = self.progress_tracker.get_progress(pose)[0]
+        delta_progress = 0
+        if self.current_progress > 0.9 and new_progress < 0.1:
+            delta_progress = (new_progress + 1) - self.current_progress 
         else:
-            self.count = 0
+            delta_progress = new_progress - self.current_progress
+        
+        self.current_progress = new_progress
+        # reward = progress
+        # print(new_progress)
+        if delta_progress < 0:
+            # actually we could still take the delta_progres
+            # why would you drive in the wrong direction hm
+            reward = 0.0
+        else:
+            reward = delta_progress * 100
 
-        if observation['collisions'][0]:
-            self.count = 0
-            # reward = -100
-            reward = -1
+
 
         # end episode if car is spinning
-        if abs(observation['poses_theta'][0]) > self.max_theta:
-            done = True
+        # if abs(observation['poses_theta'][0]) > self.max_theta:
+        #     done = True
+        # if speed is higher than 1.5, then the car is going too fast
+        vel_magnitude = np.linalg.norm([observation['linear_vels_x'][0], observation['linear_vels_y'][0]])
+        # reduce the reward depending on how far away from 1.0 the speed is
+        # print(vel_magnitude)
+        #goal = abs((vel_magnitude - 1))**2 / 50
+        #print(goal)
+        #print(reward)
+        #reward -= goal
 
+        if reward < 0:
+            reward = 0
+        if observation['collisions'][0]:
+            reward = -10
+
+        """
+        if vel_magnitude > 2.0:
+            reward -= vel_magnitude - 1.0
+        if vel_magnitude < 1.0:
+            reward = -1.0
+        """
         """
         vel_magnitude = np.linalg.norm([observation['linear_vels_x'][0], observation['linear_vels_y'][0]])
         #print("V:",vel_magnitude)
@@ -164,11 +462,19 @@ class F110_Wrapped(gym.Wrapper):
         #print(truncated)
         return self.normalise_observations(observation['scans'][0]), reward, bool(done), truncated, info
     
-    def reset(self, seed=None, options=dict(poses=[(None),None])): #start_xy=None, direction=None):
+    def reset(self, seed=None, options=None): #start_xy=None, direction=None):
         # should start off in slightly different position every time
         # position car anywhere along line from wall to wall facing
         # car will never face backwards, can face forwards at an angle
         # print("reset")
+        #print(options)
+        #print(options["poses"])
+        #print("---")
+        if options is None:
+            options = dict(poses=[(None),None])
+        # print()
+        #print(options["poses"][0])
+        #print(options["poses"][1])
         start_xy = options["poses"][0]
         direction = options["poses"][1]
         # start from origin if no pose input
@@ -177,12 +483,14 @@ class F110_Wrapped(gym.Wrapper):
         # start in random direction if no direction input
         if direction is None:
             direction = np.random.uniform(0, 2 * np.pi)
+        #print(start_xy)
+        #print(direction)
         # get slope perpendicular to track direction
         slope = np.tan(direction + np.pi / 2)
         # get magintude of slope to normalise parametric line
         magnitude = np.sqrt(1 + np.power(slope, 2))
         # get random point along line of width track
-        rand_offset = np.random.uniform(-1, 1)
+        rand_offset = np.random.uniform(-0.3, 0.3)
         rand_offset_scaled = rand_offset * self.start_radius
 
         # convert position along line to position between walls at current point
@@ -195,7 +503,16 @@ class F110_Wrapped(gym.Wrapper):
         ops = dict(poses=np.array([[x, y, t]]))
         #print(ops)
         #print(ops["poses"].shape)
+
+        # reset progress reward
+        # self.progress_tracker.reset()
+
         observation, info = self.env.reset(options = ops)
+                
+        pose = np.array([observation['poses_x'][0], observation['poses_y'][0]])
+        pose = pose[np.newaxis, :]
+        self.current_progress = self.progress_tracker.get_progress(pose)[0]
+
         #observation = dict()
         #observation['scans'] = [[0,1]]
         # reward, done, info can't be included in the Gym format
@@ -209,6 +526,8 @@ class F110_Wrapped(gym.Wrapper):
     def un_normalise_actions(self, actions):
         # convert actions from range [-1, 1] to normal steering/speed range
         steer = convert_range(actions[0], [-1, 1], [self.s_min, self.s_max])
+        #if self.fixed_speed:
+        #    return np.array([steer, self._fixed_speed], dtype=np.float)
         speed = convert_range(actions[1], [-1, 1], [self.v_min, self.v_max])
         return np.array([steer, speed], dtype=np.float)
 
@@ -229,8 +548,43 @@ class F110_Wrapped(gym.Wrapper):
         np.random.seed(self.current_seed)
         print(f"Seed -> {self.current_seed}")
 
-    """
+from f110_gym.envs.track import Track
 
+class RandomStartPosition(gym.Wrapper):
+    """
+    Places the car in a random position on the track 
+    according to the centerline
+    """
+    def __init__(self, env):
+        super().__init__(env)
+        self.cl_x = self.env.track.centerline.xs
+        self.cl_y = self.env.track.centerline.ys
+        # print(self.cl_x)
+    # get random starting position from centerline
+    
+    def reset(self,seed=None, options=None):
+        # print("reset!!")
+        random_index = np.random.randint(len(self.cl_x))
+        start_xy = (self.cl_x[random_index],self.cl_y[random_index])
+        #print(start_xy)
+        random_next = (random_index + 1) % len(self.cl_x)
+        next_xy = (self.cl_x[random_next],self.cl_y[random_next])
+        # get forward direction by pointing at next point
+        direction = np.arctan2(next_xy[1] - start_xy[1],
+                                next_xy[0] - start_xy[0])
+        # reset environment
+        #print(self.cl_x[random_index],self.cl_y[random_index])
+        # print()
+        #reset_options = dict(poses=np.array([[self.cl_x[random_index],self.cl_y[random_index],direction],dtype=object))
+        reset_options = dict(poses=np.array([[self.cl_x[random_index],self.cl_y[random_index],direction]]))
+        # print(reset_options)
+        assert(not(np.isnan(self.cl_x[random_index])))
+        assert(not(np.isnan(self.cl_y[random_index])))
+        assert(not(np.isnan(direction)))
+        return self.env.reset(options=reset_options)
+
+
+"""
 class RandomMap(gym.Wrapper):
     #Generates random maps at chosen intervals, when resetting car,
     #and positions car at random point around new track
