@@ -30,7 +30,7 @@ class ProgressReward(object):
     
     def reset(self, new_pose: Tuple[float, float]):
         pose = np.array(new_pose)
-        print(pose)
+        # print(pose)
         pose = pose[np.newaxis, :]
         self.current_progress = self.progress_tracker.get_progress(pose)[0]
 
@@ -143,7 +143,7 @@ class MixedReward(object):
         print("velocity_change_weight: ", velocity_change_weight)
         print("inital_velocity: ", inital_velocity)
         print("normalize: ", normalize)
-        
+
         self.weights = [progress_weight, raceline_delta_weight, velocity_weight, steering_change_weight, velocity_change_weight]
         self.rewards = [ProgressReward, RacelineDeltaReward, VelocityReward, MinSteeringChangeReward, MinVelocityChangeReward]
         self.normalize = normalize
@@ -221,7 +221,7 @@ class MixedReward(object):
     def reset(self, pose: Tuple[float, float]):
         self.velocity_change_reward.reset()
         self.steering_change_reward.reset()
-        print(pose)
+        # print(pose)
         self.progress_reward.reset(new_pose=pose)
         
 

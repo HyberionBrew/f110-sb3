@@ -76,6 +76,12 @@ def train(args):
                     random_start =True,
                     reward_config = reward_config_eval,
                     eval=True)
+    
+        
+    #envs = make_vec_env(wrap_env,
+    #                n_envs=args.num_process,
+    #                seed=np.random.randint(pow(2, 31) - 1),
+    #                vec_env_cls=SubprocVecEnv)
     eval_env = Monitor(eval_env)
     eval_env = TimeLimit(eval_env, max_episode_steps=500)
     # eval_env = Monitor(eval_env, args.logdir)
@@ -85,8 +91,8 @@ def train(args):
                                  log_path=str(f"{args.logdir}/evals"), eval_freq=eval_freq,
                                  deterministic=True, render=False)
     
-    
-    
+
+
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model = PPO("MultiInputPolicy", train_env, verbose=1, device=device, tensorboard_log=args.logdir)
     model.learn(total_timesteps=500_000, callback=eval_callback) #, callback=eval_callback)
@@ -99,5 +105,7 @@ def train(args):
     #                    seed=np.random.randint(pow(2, 31) - 1),
     #                    vec_env_cls=SubprocVecEnv)
     
+
+
 if __name__ == "__main__":
     train(args)

@@ -200,11 +200,11 @@ rewards = {"TD": ProgressReward,
 
 standard_config = {
     "collision_penalty": -10.0,
-    "progress_weight": 0.5,
-    "raceline_delta_weight": 0.5,
-    "velocity_weight": 0.5,
-    "steering_change_weight": 0.5,
-    "velocity_change_weight": 0.5,
+    "progress_weight": 1.0,
+    "raceline_delta_weight": 0.0,
+    "velocity_weight": 0.0,
+    "steering_change_weight": 0.0,
+    "velocity_change_weight": 0.0,
     "inital_velocity": 1.5,
     "normalize": False,
 }
@@ -217,7 +217,7 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     env = gym.make("f110_gym:f110-v0",
                     config = dict(map=map,
                     num_agents=1),
-                    render_mode="human",
+                    render_mode="human_fast",
                     ) #integrator=Integrator.euler)
     #print(env.action_space)
     #print(env.min_action)
@@ -252,20 +252,6 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     
     #print(env.observation_space)
     env = RescaleAction2(env, min_action=-1.0,max_action= 1.0)
-    
-    #print(env.action_space)
-
-    # still need a reward wrapper
-
-    #env = VelocityObservationSpace(env)
-    #env = NormalizeVelocityObservation(env)
-    # 100 hz to 20 hz
-    # env = FrameSkip(env, skip=5)
-    # todo rescale velocites 
-    
-    #e
-    # env = gym.wrappers.FlattenObservation(env)
-    # always include veloctity
     return env
 
 if __name__ == "__main__":
