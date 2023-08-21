@@ -9,28 +9,30 @@ from gymnasium.wrappers.normalize import RunningMeanStd, update_mean_var_count_f
 # adapted slightly from https://github.com/openai/gym/blob/master/gym/wrappers/normalize.py
 class NormalizeReward():
         def __init__(self,
-                env: gym.Env,
                 gamma: float = 0.99,
                 epsilon: float = 1e-8,):
             self.return_rms = RunningMeanStd(shape=())
             self.gamma = gamma
             self.epsilon = epsilon
-        def step(self,returns):
-            rews = self.normalize(returns)
+            self.returns = np.zeros(1)
+        def step(self,rews , done):
+            self.returns = self.returns * self.gamma * (1 - done) + rews 
+            rews = self.normalize(rews)
             return rews
-        def normalize(self, returns):
+        def normalize(self, rews):
             self.return_rms.update(self.returns)
-            return returns / np.sqrt(self.return_rms.var + self.epsilon)
+            return rews / np.sqrt(self.return_rms.var + self.epsilon)
         
 class ProgressReward(object):
     def __init__(self, track:Track) -> None:
         self._current_progress = None
-        self.P = Progress(track)
+        self.progress_tracker = Progress(track)
     
     def reset(self, new_pose: Tuple[float, float]):
         pose = np.array(new_pose)
+        print(pose)
         pose = pose[np.newaxis, :]
-        self.current_progress = self.P.get_progress(pose)[0]
+        self.current_progress = self.progress_tracker.get_progress(pose)[0]
 
     def __call__(self, pose: Tuple[float, float]):
         pose = np.array(pose)
@@ -76,6 +78,8 @@ class MinSteeringChangeReward(object):
         self._last_action = 0.0
     def __call__(self, action: np.ndarray) -> float:
         # penalize the change in steering angle
+        assert(len(action) == 1 or (len(action) == 2))
+        
         delta = (action[0] - self._last_action) **2
         delta = np.clip(delta, self.low, self.high)
         reward = -delta
@@ -93,12 +97,13 @@ class MinVelocityChangeReward(object):
         self.high = high
         self.inital_velocity = inital_velocity
         self._last_velocity = inital_velocity
-    def __call__(self, action: np.ndarray) -> float:
+    def __call__(self, vel_x, vel_y) -> float:
         # penalize the change in velocity angle
-        delta = (action[1] - self._last_velocity) **2
+        velocity = np.sqrt(vel_x**2 + vel_y**2)
+        delta = (velocity- self._last_velocity) **2
         delta = np.clip(delta, self.low, self.high)
         reward = -delta
-        self._last_velocity = action[1]
+        self._last_velocity = velocity
         return reward
     def reset(self):
         self._last_velocity = self.inital_velocity
@@ -126,10 +131,22 @@ class MixedReward(object):
                  velocity_weight: float = 0.0, 
                  steering_change_weight: float = 0.0, 
                  velocity_change_weight: float= 0.0,
-                 inital_velocity: float = 1.5):
+                 inital_velocity: float = 1.5,
+                 normalize: bool = True):
+        # print the args used
+        print("Reward function args:")
+        print("collision_penalty: ", collision_penalty)
+        print("progress_weight: ", progress_weight)
+        print("raceline_delta_weight: ", raceline_delta_weight)
+        print("velocity_weight: ", velocity_weight)
+        print("steering_change_weight: ", steering_change_weight)
+        print("velocity_change_weight: ", velocity_change_weight)
+        print("inital_velocity: ", inital_velocity)
+        print("normalize: ", normalize)
+        
         self.weights = [progress_weight, raceline_delta_weight, velocity_weight, steering_change_weight, velocity_change_weight]
         self.rewards = [ProgressReward, RacelineDeltaReward, VelocityReward, MinSteeringChangeReward, MinVelocityChangeReward]
-
+        self.normalize = normalize
         self.collision_penalty = collision_penalty
         self.progress_weight = progress_weight
         self.raceline_delta_weight = raceline_delta_weight
@@ -140,25 +157,28 @@ class MixedReward(object):
         self.progress_reward = ProgressReward(track)
         self.raceline_reward = RacelineDeltaReward(track)
         self.velocity_reward = VelocityReward(track)
-        self.steering_change_reward = MinSteeringChangeReward(env.action_space.min[0], 
-                                                              env.action_space.max[0])
-        self.velocity_change_reward = MinVelocityChangeReward(env.action_space.min[1], 
-                                                              env.action_space.max[1],
+        # print(env.action_space.low)
+        self.steering_change_reward = MinSteeringChangeReward(env.action_space.low[0][0], 
+                                                              env.action_space.high[0][0])
+        self.velocity_change_reward = MinVelocityChangeReward(env.action_space.low[0][1], 
+                                                              env.action_space.high[0][1],
                                                               inital_velocity=inital_velocity)
 
         # for each reward instantiate a normalization object
         self.normalizers = []
         for reward in self.rewards:
-            self.normalizers.append(RunningMeanStd(shape=()))
+            self.normalizers.append(NormalizeReward())
 
     def __call__(self, obs, action, done):
         # get pose_x and pose_y from obs
         # assert action is a numpy array of length 2 if velocity change is not zero
-        assert(len(action) == 2 or self.velocity_change_reward == 0)
-        assert('poses_x' in obs 
-               and 'poses_y' in obs 
-               and 'linear_velocities_x' in obs 
-               and 'linear_velocities_y' in obs)
+        assert(len(action[0]) == 2 or self.velocity_change_reward == 0)
+        assert ('poses_x' in obs and
+        'poses_y' in obs and 
+        'linear_vels_x' in obs and 
+        'linear_vels_y' in obs, 
+        "Some keys are missing from the obs dictionary"
+        )
         
         pose = np.array([obs['poses_x'][0], obs['poses_y'][0]])
         rewards = np.zeros(len(self.rewards))
@@ -169,24 +189,30 @@ class MixedReward(object):
             raceline_reward = self.raceline_reward(pose)
             rewards[1] = raceline_reward
         if self.velocity_weight != 0:
-            velocity_reward = self.velocity_reward(obs['linear_velocities_x'][0], obs['linear_velocities_y'][0])
+            velocity_reward = self.velocity_reward(obs['linear_vels_x'][0], obs['linear_vels_y'][0])
             rewards[2] = velocity_reward
         if self.steering_change_reward != 0:
             steering_change_reward = self.steering_change_reward(action[0])
             rewards[3] = steering_change_reward
         if self.velocity_change_reward != 0:
-            velocity_change_reward = self.velocity_change_reward(obs['linear_velocities_x'][0]) 
+            velocity_change_reward = self.velocity_change_reward(obs['linear_vels_x'][0], obs['linear_vels_y'][0]) 
             rewards[4] = velocity_change_reward
-        print(rewards)
-        for i in range(len(self.rewards)):
-            if (abs(self.weights) < 0.0000001):
-                continue
-            else:
-                # normalize the reward
-                rewards[i] = self.normalizers[i].step(rewards[i])
-        print(rewards) # now normalized
+        #print(" [ProgressReward, RacelineDeltaReward, VelocityReward, MinSteeringChangeReward, MinVelocityChangeReward]")
+        #print("before normalization: ", rewards)
+        assert(len(self.weights) == len(self.rewards))
+        if self.normalize:
+            for i in range(len(self.rewards)):
+                if (abs(self.weights[i]) < 0.0000001):
+                    continue
+                else:
+                    # normalize the reward
+                    rewards[i] = self.normalizers[i].step(rewards[i], done) 
+        #print("after norm", rewards) # now normalized
+        rewards = rewards* self.weights
+        #print("after weighting", rewards)
         # sum rewards
         reward = np.sum(rewards)
+        #print("rewards", reward)
         # now apply penalty for collision
         if done:
             reward = self.collision_penalty
@@ -195,6 +221,7 @@ class MixedReward(object):
     def reset(self, pose: Tuple[float, float]):
         self.velocity_change_reward.reset()
         self.steering_change_reward.reset()
+        print(pose)
         self.progress_reward.reset(new_pose=pose)
         
 

@@ -35,20 +35,46 @@ def save_parameters_to_file(logdir, args, filename="params.json"):
         json.dump(params, file, indent=4)
 
 def train(args):
+    
+    reward_config = {
+        "collision_penalty": -10.0,
+        "progress_weight": 1.0,
+        "raceline_delta_weight": 0.0,
+        "velocity_weight": 0.0,
+        "steering_change_weight": 0.0,
+        "velocity_change_weight": 0.0,
+        "inital_velocity": 1.5,
+        "normalize": True,
+    }
+
+    reward_config_eval = {
+        "collision_penalty": -10.0,
+        "progress_weight": 1.0,
+        "raceline_delta_weight": 0.0,
+        "velocity_weight": 0.0,
+        "steering_change_weight": 0.0,
+        "velocity_change_weight": 0.0,
+        "inital_velocity": 1.5,
+        "normalize": False,
+    }
+
+
+
 
     save_parameters_to_file(args.logdir, args)
     # create logdir
     train_env = make_base_env(map= args.track,
                     fixed_speed=args.fixed_speed,
                     random_start =True,
-                    reward = args.reward)
+                    reward_config = reward_config)
     
     train_env = TimeLimit(train_env, max_episode_steps=1000)
     
+
     eval_env = make_base_env(map= args.track,
                     fixed_speed=args.fixed_speed,
                     random_start =True,
-                    reward="TD",
+                    reward_config = reward_config_eval,
                     eval=True)
     eval_env = Monitor(eval_env)
     eval_env = TimeLimit(eval_env, max_episode_steps=500)

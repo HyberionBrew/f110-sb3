@@ -14,6 +14,7 @@ from gymnasium.spaces import Box
 from typing import Union
 from gymnasium.wrappers import RescaleAction
 from gymnasium.wrappers import ClipAction
+from code.reward import MixedReward
 
 class RescaleAction2(gym.ActionWrapper, gym.utils.RecordConstructorArgs):
     """Affinely rescales the continuous action space of the environment to the range [min_action, max_action].
@@ -161,7 +162,25 @@ class MinActionReward(gym.Wrapper):
             reward = 1 - (1 / len(action) * np.linalg.norm(action) ** 2)
         #print("reward", reward)
         return obs, reward, done, truncated, info
-    
+
+class MixedGymReward(gym.Wrapper):
+    def __init__(self, env, **reward_config):
+        super().__init__(env)
+        self.reward = MixedReward(env, env.track, **reward_config)
+
+    def step(self, action):
+        observation, reward, done, truncated, info = self.env.step(action)
+        reward = self.reward(observation, action, done)
+        # print(reward)
+        return observation, reward, done, truncated, info
+    def reset(self, seed=None, options=None):
+        observation, info = self.env.reset(seed=seed, options=options)
+        pose = (observation['poses_x'][0], observation['poses_y'][0])
+        # print(pose)
+        self.reward.reset(pose)
+        return observation, info
+
+
 class ReduceSpeedActionSpace(gym.ActionWrapper):
     def __init__(self,env, low, high):
         super(ReduceSpeedActionSpace, self).__init__(env)
@@ -179,15 +198,26 @@ rewards = {"TD": ProgressReward,
            "MinAct": MinActionReward,
            "MinChange": MinChangeReward}
 
+standard_config = {
+    "collision_penalty": -10.0,
+    "progress_weight": 0.5,
+    "raceline_delta_weight": 0.5,
+    "velocity_weight": 0.5,
+    "steering_change_weight": 0.5,
+    "velocity_change_weight": 0.5,
+    "inital_velocity": 1.5,
+    "normalize": False,
+}
+
+
 def make_base_env(map= "Infsaal", fixed_speed=None, 
                   random_start=True, reward = "TD", 
-                  eval=False):
+                  eval=False, reward_config = standard_config):
     
     env = gym.make("f110_gym:f110-v0",
                     config = dict(map=map,
                     num_agents=1),
                     render_mode="human",
-                    
                     ) #integrator=Integrator.euler)
     #print(env.action_space)
     #print(env.min_action)
@@ -201,7 +231,8 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     env = ReduceSpeedActionSpace(env, 0.5, 3.0)
     # add a reset if the velocity x +y falls below a threshold
     env = ClipAction(env)
-    env = rewards[reward](env) #ProgressReward(env)
+    # env = rewards[reward](env) #ProgressReward(env)
+    env = MixedGymReward(env, **reward_config)
     env = SpinningReset(env, maxAngularVel= 5.0)
     # env = MinSpeedReset(env, min_speed=0.4)
     #env = ActionDictWrapper(env, fixed_speed=fixed_speed)
@@ -241,6 +272,6 @@ if __name__ == "__main__":
     print("Starting test ...")
     #env = make_base_env(fixed_speed=None)
     #check_env(env, warn=True, skip_render_check=False)
-    env = make_base_env(fixed_speed=1.0, reward="MinChange")
+    env = make_base_env(fixed_speed=None, reward="MinChange")
     check_env(env, warn=True, skip_render_check=False)
     print("Finished Test")
