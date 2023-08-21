@@ -179,7 +179,9 @@ rewards = {"TD": ProgressReward,
            "MinAct": MinActionReward,
            "MinChange": MinChangeReward}
 
-def make_base_env(map= "Infsaal", fixed_speed=None, random_start=True, reward = "TD"):
+def make_base_env(map= "Infsaal", fixed_speed=None, 
+                  random_start=True, reward = "TD", 
+                  eval=False):
     
     env = gym.make("f110_gym:f110-v0",
                     config = dict(map=map,
@@ -196,21 +198,19 @@ def make_base_env(map= "Infsaal", fixed_speed=None, random_start=True, reward = 
     env = RandomStartPosition(env)
     # make a spin wrap detector
     # print("HI")
-    env = ReduceSpeedActionSpace(env, -2.0, 3.0)
+    env = ReduceSpeedActionSpace(env, 0.5, 3.0)
     # add a reset if the velocity x +y falls below a threshold
     env = ClipAction(env)
     env = rewards[reward](env) #ProgressReward(env)
-    env = SpinningReset(env, maxTheta = 100)
+    env = SpinningReset(env, maxAngularVel= 5.0)
     # env = MinSpeedReset(env, min_speed=0.4)
     #env = ActionDictWrapper(env, fixed_speed=fixed_speed)
     if fixed_speed is not None:
         env = FixSpeedControl(env, fixed_speed=fixed_speed)
-
-    
     
     env = LidarOccupancyObservation(env, resolution=0.25)
     print(env.observation_space)
-    env = gym.wrappers.FilterObservation(env, filter_keys=["lidar_occupancy","linear_vels_x", "linear_vels_y"]) #, "angular_vels_z"])
+    env = gym.wrappers.FilterObservation(env, filter_keys=["lidar_occupancy","linear_vels_x", "linear_vels_y", "ang_vels_z"]) #, "angular_vels_z"])
     
     env = VelocityObservationSpace(env)
     env = NormalizeVelocityObservation(env)

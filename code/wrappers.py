@@ -49,12 +49,13 @@ class VelocityObservationSpace(gym.ObservationWrapper):
         super().__init__(env)
         self.observation_space['linear_vels_x'] = Box(shape=(1,), low=-20, high=20)
         self.observation_space['linear_vels_y'] = Box(shape=(1,), low=-20, high=20)
-        # self.observation_space['angular_vels_z'] = Box(shape=(1,), low=-20, high=20)
+        # self.observation_space['']
+        self.observation_space['ang_vels_z'] = Box(shape=(1,), low=-20, high=20)
     def observation(self, obs):
         # clip obs between low and high
         obs['linear_vels_x'] = np.clip(obs['linear_vels_x'], -20, 20)
         obs['linear_vels_y'] = np.clip(obs['linear_vels_y'], -20, 20)
-        # obs['angular_vels_z'] = np.clip(obs['angular_vels_z'], -20, 20)
+        obs['ang_vels_z'] = np.clip(obs['ang_vels_z'], -20, 20)
         # obs['linear_vels_y'] = np.clip(obs['linear_vels_y'], -20, 20)
         return obs
 
@@ -90,9 +91,9 @@ class NormalizeVelocityObservation(gym.ObservationWrapper):
         # normalise between -1 and 1
         obs['linear_vels_y'] = 2 * ((obs['linear_vels_y'] - low) / (high - low)) - 1
         
-        #obs['angular_vels_z'] = np.clip(obs['angular_vels_z'], low, high)
+        obs['ang_vels_z'] = np.clip(obs['ang_vels_z'], low, high)
         # normalise between -1 and 1
-        # obs['angular_vels_z'] = 2 * ((obs['angular_vels_z'] - low) / (high - low)) - 1
+        obs['ang_vels_z'] = 2 * ((obs['ang_vels_z'] - low) / (high - low)) - 1
         
         assert(not(np.isnan(obs['linear_vels_y'])))
         assert(not(np.isnan(obs['linear_vels_x'])))
@@ -294,12 +295,12 @@ class ProgressReward(gym.Wrapper):
         return observation, info
 
 class SpinningReset(gym.Wrapper):
-    def __init__(self, env, maxTheta):
+    def __init__(self, env, maxAngularVel):
         super().__init__(env)
-        self.maxTheta = maxTheta
+        self.maxAngularVel = maxAngularVel #TODO! replace with angular vel
     def step(self,action):
         observation, ac, done, truncated , info = self.env.step(action)
-        if abs(observation['poses_theta'][0]) > self.maxTheta:
+        if abs(observation['ang_vels_z'][0]) > self.maxAngularVel:
             done = True
         return observation, ac, done, truncated, info
     

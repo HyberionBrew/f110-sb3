@@ -15,7 +15,7 @@ import torch
 from stable_baselines3.common.monitor import Monitor
 
 
-parser = argparse.ArgumentParser(description='Your script description')
+parser = argparse.ArgumentParser(description='Train a model on the F1Tenth Gym environment')
 parser.add_argument('--logdir', type=str, default='logs', help='Logging directory')
 parser.add_argument('--track', type=str, default='Infsaal', help='Track to train on')
 parser.add_argument('--fixed_speed', type=float, default=None, help='Fixing the speed to the provided value')
@@ -48,7 +48,8 @@ def train(args):
     eval_env = make_base_env(map= args.track,
                     fixed_speed=args.fixed_speed,
                     random_start =True,
-                    reward="TD")
+                    reward="TD",
+                    eval=True)
     eval_env = Monitor(eval_env)
     eval_env = TimeLimit(eval_env, max_episode_steps=500)
     # eval_env = Monitor(eval_env, args.logdir)

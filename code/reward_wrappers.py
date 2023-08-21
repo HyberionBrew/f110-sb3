@@ -53,7 +53,8 @@ class Progress:
     #    progress = idx / n_points
     #    assert 0 <= progress <= 1, f'progress out of bound {progress}'
     #    return progress
-
+class MixedReward(gym.RewardWrapper):
+    pass
 
 class ProgressReward(gym.RewardWrapper):
     def __init__(self, env, collision_penalty: float = 0.0):
