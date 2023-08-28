@@ -8,9 +8,14 @@ from gymnasium.wrappers.normalize import RunningMeanStd, update_mean_var_count_f
 
 # adapted slightly from https://github.com/openai/gym/blob/master/gym/wrappers/normalize.py
 class NormalizeReward():
-        def __init__(self,
+        def __init__(self, env,
                 gamma: float = 0.99,
                 epsilon: float = 1e-8,):
+            # TODO! Make this right
+            # self.num_envs = getattr(env, "num_envs", 1)
+            # self.is_vector_env = getattr(env, "is_vector_env", False)
+            # print("self.num_envs", self.num_envs)
+            # print("self.is_vector_env", self.is_vector_env)
             self.return_rms = RunningMeanStd(shape=())
             self.gamma = gamma
             self.epsilon = epsilon
@@ -96,6 +101,7 @@ class RacelineDeltaReward(object):
         xs = track.raceline.xs
         ys = track.raceline.ys
         self.centerline = np.stack((xs, ys), axis=-1)
+        self.largest_delta_observed = 2.0
 
     def __call__(self, pose: Tuple[float, float]) -> float:
         # calculate the squared distances to all points on the raceline
@@ -104,8 +110,15 @@ class RacelineDeltaReward(object):
         min_distance_squared = np.min(distances)
         # take the square root to get the actual minimum distance
         min_distance = np.sqrt(min_distance_squared)
+        if min_distance > self.largest_delta_observed:
+            self.largest_delta_observed = min_distance
+
+        # normalize the min_distance
+        reward = min_distance / self.largest_delta_observed
         # the negative of the distance, meaning closer to the line is better
-        return -min_distance
+        reward = 1.0 - reward
+        reward = reward ** 2
+        return reward
 """
 @brief    Reward function based on the change in steering angle
 """
@@ -117,12 +130,19 @@ class MinSteeringChangeReward(object):
     def __call__(self, action: np.ndarray) -> float:
         # penalize the change in steering angle
         assert(len(action) == 1 or (len(action) == 2))
-        
-        delta = (action[0] - self._last_action) **2
-        delta = np.clip(delta, self.low, self.high)
-        reward = -delta
+        delta = abs((action[0] - self._last_action))
+        #print ("delta", delta)
+
+        normalized = delta / (self.high - self.low)
+        #print(self.high, self.low)
+        inverse = 1.0 - normalized
+        delta = (inverse) **2 # prefer smaller shifts
+        # delta = np.clip(delta, self.low, self.high)
+        reward = delta
         self._last_action = action[0]
+        #print(reward)
         return reward
+
     def reset(self):
         self._last_action = 0.0
 
@@ -135,13 +155,18 @@ class MinVelocityChangeReward(object):
         self.high = high
         self.inital_velocity = inital_velocity
         self._last_velocity = inital_velocity
+
     def __call__(self, vel_x, vel_y) -> float:
         # penalize the change in velocity angle
         velocity = np.sqrt(vel_x**2 + vel_y**2)
-        delta = (velocity- self._last_velocity) **2
-        delta = np.clip(delta, self.low, self.high)
-        reward = -delta
+        delta = abs((velocity - self._last_velocity))
+        normalized = delta / (self.high - self.low)
+        inverse = 1.0 - normalized
+        reward = (inverse) **2 # prefer smaller shifts
         self._last_velocity = velocity
+        # print("vel")
+        # print(delta)
+        # print(reward)
         return reward
     def reset(self):
         self._last_velocity = self.inital_velocity
@@ -185,6 +210,7 @@ class MixedReward(object):
         print("normalize: ", normalize)
         self.weights = [progress_weight, raceline_delta_weight, velocity_weight, steering_change_weight, velocity_change_weight, pure_progress_weight]
         self.rewards = [ProgressReward, RacelineDeltaReward, VelocityReward, MinSteeringChangeReward, MinVelocityChangeReward, PureProgressReward]
+        self.rewards_name = ["ProgressReward", "RacelineDeltaReward", "VelocityReward", "MinSteeringChangeReward", "MinVelocityChangeReward", "PureProgressReward"]
         self.normalize = normalize
         self.collision_penalty = collision_penalty
         self.progress_weight = progress_weight
@@ -208,7 +234,7 @@ class MixedReward(object):
         # for each reward instantiate a normalization object
         self.normalizers = []
         for reward in self.rewards:
-            self.normalizers.append(NormalizeReward())
+            self.normalizers.append(NormalizeReward(env))
 
     def __call__(self, obs, action, collision, done):
         # get pose_x and pose_y from obs
@@ -260,13 +286,17 @@ class MixedReward(object):
         #print("after weighting", rewards)
         # sum rewards
         reward = np.sum(rewards)
-        
+        # create dict from rewards
+        rewards_dict = {}
+        for i, rew_name in enumerate(self.rewards_name):
+            rewards_dict[str(rew_name)] = rewards[i]
         #print("rewards", reward)
         # now apply penalty for collision
         if collision:
             # print("Collision Penalty")
             reward = self.collision_penalty
-        return reward , rewards
+        # print(rewards_dict)
+        return reward , rewards_dict
 
     def reset(self, pose: Tuple[float, float]):
         self.velocity_change_reward.reset()

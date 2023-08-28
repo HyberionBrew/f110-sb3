@@ -166,6 +166,40 @@ class MinActionReward(gym.Wrapper):
         #print("reward", reward)
         return obs, reward, done, truncated, info
 
+import collections
+class AugmentObservationsPreviousAction(gym.Wrapper):
+    def __init__(self, env, inital_velocity=1.5):
+        super().__init__(env)
+        self.inital_velocity = inital_velocity
+        obs_dict = collections.OrderedDict()
+        for k, space in self.observation_space.spaces.items():
+            obs_dict[k] = space
+        obs_dict['previous_action'] = gym.spaces.Box(low=self.action_space.low, high=self.action_space.high,
+                                                     dtype=self.action_space.dtype,
+                                                     shape=self.action_space.shape)
+        self.observation_space = gym.spaces.Dict(obs_dict)
+
+        self.previous_action = np.zeros((self.action_space.shape), dtype=self.action_space.dtype)
+
+        if len(self.previous_action[0]) == 2:
+            self.previous_action[0][1] = inital_velocity
+
+    def step(self, action):
+        obs, reward, done, truncated, info = self.env.step(action)
+        obs['previous_action'] = self.previous_action
+        self.previous_action = action
+        return obs, reward, done, truncated, info
+    
+    def reset(self, seed = None, options=None):
+        obs, info = self.env.reset(seed=seed, options=options)
+        self.previous_action = np.zeros((self.action_space.shape), dtype=self.action_space.dtype)
+        
+        if len(self.previous_action[0]) == 2:
+            self.previous_action[0][1] = self.inital_velocity
+        obs['previous_action'] = self.previous_action
+        return obs, info
+
+
 class MixedGymReward(gym.Wrapper):
     def __init__(self, env, **reward_config):
         # add checks if in vectorized env??
@@ -181,6 +215,8 @@ class MixedGymReward(gym.Wrapper):
         #logger.record("reward", reward)
         #logger.record("reward_TD", rewards[0])
         self.all_rewards = rewards
+        info["rewards"] = self.all_rewards
+        
         return observation, reward, done, truncated, info
     
     def reset(self, seed=None, options=None):
@@ -244,12 +280,14 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     env = ClipAction(env)
     # env = rewards[reward](env) #ProgressReward(env)
     env = SpinningReset(env, maxAngularVel= 5.0)
-    env = MixedGymReward(env, **reward_config)
+   
     # env = MinSpeedReset(env, min_speed=0.4)
     #env = ActionDictWrapper(env, fixed_speed=fixed_speed)
     if fixed_speed is not None:
         env = FixSpeedControl(env, fixed_speed=fixed_speed)
-    
+    env = FrameSkip(env, skip=5) # make it 20 HZ from 100 HZ
+    env = MixedGymReward(env, **reward_config)
+
     env = ProgressObservation(env)
     env = LidarOccupancyObservation(env, resolution=0.25)
     # print(env.observation_space)
@@ -261,14 +299,21 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     # env = gym.wrappers.FilterObservation(env, filter_keys=["lidar_occupancy","linear_vels_x", "linear_vels_y"])
     #env = PoseObservationSpace(env)
     env = NormalizePose(env)
-    env = FrameSkip(env, skip=5) # make it 20 HZ from 100 HZ
+    
     
     #print(env.observation_space)
     env = RescaleAction2(env, min_action=-1.0,max_action= 1.0)
+    
+    env = AugmentObservationsPreviousAction(env, inital_velocity=0)
+    # print(env.observation_space)
     env = TimeLimit(env, max_episode_steps=500)
     return env
 
 from stable_baselines3 import PPO
+from functools import partial
+from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.vec_env import SubprocVecEnv
+
 if __name__ == "__main__":
     print("Starting test ...")
     #env = make_base_env(fixed_speed=None)
@@ -280,5 +325,15 @@ if __name__ == "__main__":
                 eval=True)
     eval_env = TimeLimit(eval_env, max_episode_steps=100)
     model = PPO("MultiInputPolicy", eval_env, verbose=1, device='cpu')
-    model.learn(total_timesteps=500, progress_bar=True)
+    model.learn(total_timesteps=5, progress_bar=True)
+    
+    partial_make_base_env = partial(make_base_env, 
+                                fixed_speed=None,
+                                random_start =True,)
+    train_envs = make_vec_env(partial_make_base_env,
+                n_envs=2,
+                seed=np.random.randint(pow(2, 31) - 1),
+                vec_env_cls=SubprocVecEnv)
+    model = PPO("MultiInputPolicy", train_envs, verbose=1, device='cpu')
+    
     print("Finished Test")

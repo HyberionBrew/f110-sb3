@@ -11,10 +11,27 @@ parser.add_argument('--fixed_speed', type=float, default=None, help='Fixing the 
 
 args = parser.parse_args()
 import matplotlib.pyplot as plt
+
+
+standard_config = {
+    "collision_penalty": -50.0,
+    "progress_weight": 0.0,
+    "raceline_delta_weight": 0.0,
+    "velocity_weight": 0.0,
+    "steering_change_weight": 0.0,
+    "velocity_change_weight": 0.0,
+    "pure_progress_weight": 1.0,
+    "inital_velocity": 1.5,
+    "normalize": False,
+}
+
+
+
 def evaluate(args):
     eval_env = make_base_env(map= args.track,
                     fixed_speed=args.fixed_speed,
-                    random_start =True,)
+                    random_start =True,
+                    reward_config = standard_config,)
     eval_env = TimeLimit(eval_env, max_episode_steps=500)
     
     model = PPO.load(args.model_path)
@@ -23,17 +40,19 @@ def evaluate(args):
         episode += 1
         obs, _ = eval_env.reset()
         done = False
+        truncated = False
         rew = 0
         steps = 0
         rewards = []
-        while not done:
+        while not done and not truncated:
             # print(obs)
             steps += 1
             action, _ = model.predict(obs)
             # print(action)
             # print(action.shape)
-            obs, reward, done, truncated, _ = eval_env.step(action)
+            obs, reward, done, truncated, info = eval_env.step(action)
             print(reward)
+            print(info)
             rewards.append(reward)
             rew += reward * 0.99
             if truncated:

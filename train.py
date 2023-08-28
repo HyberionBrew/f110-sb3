@@ -4,6 +4,7 @@ from base_env import make_base_env
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.callbacks import EvalCallback
+from stable_baselines3.common.callbacks import CheckpointCallback
 from gymnasium.wrappers import TimeLimit
 from gymnasium.wrappers.record_video import RecordVideo
 
@@ -22,6 +23,8 @@ parser.add_argument('--track', type=str, default='Infsaal', help='Track to train
 parser.add_argument('--fixed_speed', type=float, default=None, help='Fixing the speed to the provided value')
 parser.add_argument('--num_processes', type=int, default=1, help='Number of parallel processes')
 parser.add_argument('--reward' , type=str, default="TD", help='Reward function to use')
+parser.add_argument('--model_path', type=str, default=None, help='Path to model to load')
+
 args = parser.parse_args()
 
 def save_parameters_to_file(logdir, args, filename="params.json"):
@@ -36,41 +39,30 @@ def save_parameters_to_file(logdir, args, filename="params.json"):
         json.dump(params, file, indent=4)
 
 class RewardLoggerCallback(BaseCallback):
-    def __init__(self,env, verbose=0):
-        self.env = env
+    def __init__(self, verbose=0):
+         super(RewardLoggerCallback, self).__init__(verbose)
     def _on_step(self) -> bool:
         # Access the environment using self.locals['env']
         # Example: logging the current episode reward
         # (this assumes the reward is stored in your custom Gym environment as 'current_reward')
-        reward = self.env.all_rewards
-        print(reward)
-        self.logger.record('train/custom_reward', reward)
+        info = self.locals.get("infos")
+        custom_reward = info[0].get('rewards', None)
+        # print(custom_reward)
+        for key in custom_reward.keys():
+            self.logger.record_mean(f"train/{key}", custom_reward[key])
+
         
         # Return True to continue training, False to stop
         return True
     
-class TensorboardCallback(BaseCallback):
-    """
-    Custom callback for plotting additional values in tensorboard.
-    """
-
-    def __init__(self, verbose=0):
-        super().__init__(verbose)
-
-    def _on_step(self) -> bool:
-        # Log scalar value (here a random variable)
-        value = self.all_rewards
-        self.logger.record("TD", value[0])
-        return True
-
-
+import datetime
 def train(args):
     
     reward_config = {
         "collision_penalty": -10.0,
-        "progress_weight": 1.0,
+        "progress_weight": 0.0,
         "raceline_delta_weight": 0.0,
-        "velocity_weight": 0.0,
+        "velocity_weight": 1.0,
         "steering_change_weight": 0.0,
         "velocity_change_weight": 0.0,
         "pure_progress_weight": 0.0,
@@ -90,15 +82,25 @@ def train(args):
         "normalize": False,
     }
 
+    # build filename string based on reward config
+    # if 0 dont include in filename else include with value
+    filename = ""
+    for key in reward_config.keys():
+        if reward_config[key] != 0:
+            filename += f"{key}_{reward_config[key]}_"
+    # append the current time and date
+    filename += datetime.datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
 
-
-
-    save_parameters_to_file(args.logdir, args)
+    save_parameters_to_file(args.logdir, args, filename=filename + ".json")
     # create logdir
     #train_env = make_base_env(map= args.track,
     #                fixed_speed=args.fixed_speed,
     #                random_start =True,
     #                reward_config = reward_config)
+    checkpoint_callback = CheckpointCallback(save_freq=10_000, 
+                                             save_path='./checkpoints/',
+                                             name_prefix=f"f110_ppo_{filename}")
+
     partial_make_base_env = partial(make_base_env, 
                                     map=args.track,
                                     fixed_speed=args.fixed_speed,
@@ -123,15 +125,24 @@ def train(args):
     # eval_env = TimeLimit(eval_env, max_episode_steps=500)
     # eval_env = Monitor(eval_env, args.logdir)
     # eval_env = RecordVideo(eval_env, f"{args.logdir}/videos", episode_trigger = lambda episode_number: True)
-    eval_freq = 10_000
+    eval_freq = 5_000
     eval_callback = EvalCallback(eval_env, best_model_save_path=str(f"{args.logdir}/models"), n_eval_episodes=5,
                                  log_path=str(f"{args.logdir}/evals"), eval_freq=eval_freq,
                                  deterministic=True, render=False)
     
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model = PPO("MultiInputPolicy", train_envs, verbose=1, device=device, tensorboard_log=args.logdir)
-    # model.learn(total_timesteps=500_000, callback=[eval_callback,RewardLoggerCallback(train_envs)], progress_bar=True) #, callback=eval_callback)
-    model.learn(total_timesteps=500_000, callback=[eval_callback], progress_bar=True) #, callback=eval_callback)
+    if args.model_path is not None: 
+        model = PPO.load(args.model_path, env=train_envs, device=device, tensorboard_log=args.logdir)
+    else:
+        model = PPO("MultiInputPolicy", train_envs, verbose=1, device=device, tensorboard_log=args.logdir)
+
+    # model = PPO("MultiInputPolicy", train_envs, verbose=1, device=device, tensorboard_log=args.logdir)
+    # if load model
+    
+    model.learn(total_timesteps=500_000, callback=[eval_callback,RewardLoggerCallback(),checkpoint_callback], progress_bar=True) #, callback=eval_callback)
+    # save the model
+    model.save(f"{args.logdir}/models/f110_ppo_final_{filename}")
+    # model.learn(total_timesteps=500_000, callback=[eval_callback], progress_bar=True) #, callback=eval_callback)
 if __name__ == "__main__":
     train(args)
