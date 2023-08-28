@@ -10,13 +10,13 @@ parser.add_argument('--track', type=str, default='Infsaal', help='Track to train
 parser.add_argument('--fixed_speed', type=float, default=None, help='Fixing the speed to the provided value')
 
 args = parser.parse_args()
-
+import matplotlib.pyplot as plt
 def evaluate(args):
     eval_env = make_base_env(map= args.track,
                     fixed_speed=args.fixed_speed,
                     random_start =True,)
-    # eval_env = TimeLimit(eval_env, max_episode_steps=5000)
-
+    eval_env = TimeLimit(eval_env, max_episode_steps=500)
+    
     model = PPO.load(args.model_path)
     episode = 0
     while episode < 2000:
@@ -24,16 +24,28 @@ def evaluate(args):
         obs, _ = eval_env.reset()
         done = False
         rew = 0
+        steps = 0
+        rewards = []
         while not done:
             # print(obs)
+            steps += 1
             action, _ = model.predict(obs)
-            print(action)
+            # print(action)
             # print(action.shape)
-            obs, reward, done, _, _ = eval_env.step(action)
+            obs, reward, done, truncated, _ = eval_env.step(action)
+            print(reward)
+            rewards.append(reward)
             rew += reward * 0.99
-            if done:
+            if truncated:
+                print(steps)
+                print("Truncated")
+
+            if done or truncated:
+                print(steps)
                 print("Lap done")
                 print("R:", rew)
+                plt.plot(rewards)
+                plt.show()
             eval_env.render()
 
 if __name__ == "__main__":

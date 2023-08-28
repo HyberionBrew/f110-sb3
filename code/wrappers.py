@@ -41,9 +41,6 @@ from gymnasium.spaces import Box
 
 
 
-
-
-
 class VelocityObservationSpace(gym.ObservationWrapper):
     def __init__(self, env):
         super().__init__(env)
@@ -69,9 +66,31 @@ class FrameSkip(gym.Wrapper):
         for t in range(self.frame_skip):
             obs, reward, done, truncate, info = self.env.step(action)
             R += reward
-            if done:
+            if done or truncate:
                 break
         return obs, R, done, truncate, info
+
+class NormalizePose(gym.ObservationWrapper):
+    def __init__(self, env, low=-30, high=30):
+        super().__init__(env)
+        self.observation_space['poses_x'] = Box(shape=(1,), low=low, high=high)
+        self.observation_space['poses_y'] = Box(shape=(1,), low=low, high=high)
+
+    def observation(self, observation):
+        low = self.observation_space['poses_x'].low
+        high = self.observation_space['poses_x'].high
+        # clip obs between low and high
+        # assert that poses are in range
+        assert(observation['poses_x'] < self.observation_space['poses_x'].high and observation['poses_x'] > self.observation_space['poses_x'].low)
+        assert(observation['poses_y'] < self.observation_space['poses_y'].high and observation['poses_y'] > self.observation_space['poses_y'].low)
+        observation['poses_x'] = np.clip(observation['poses_x'], low, high)
+        # normalise between -1 and 1
+        observation['poses_x'] = 2 * ((observation['poses_x'] - low) / (high - low)) - 1
+
+        observation['poses_y'] = np.clip(observation['poses_y'], low, high)
+        # normalise between -1 and 1
+        observation['poses_y'] = 2 * ((observation['poses_y'] - low) / (high - low)) - 1
+        return observation
 
 
 class NormalizeVelocityObservation(gym.ObservationWrapper):
@@ -99,6 +118,39 @@ class NormalizeVelocityObservation(gym.ObservationWrapper):
         assert(not(np.isnan(obs['linear_vels_x'])))
         return obs
 
+
+class ProgressObservation(gym.ObservationWrapper):
+    def __init__(self, env):
+        super(ProgressObservation, self).__init__(env)
+        self.progress_tracker = Progress(self.env.track)
+        # add progress with range [0,1] to the observation space
+                # extend observation space
+        obs_dict = collections.OrderedDict()
+        for k, space in self.observation_space.spaces.items():
+            obs_dict[k] = space
+        obs_dict["progress"] = Box(shape=(1,), low=0, high=1)
+        self.observation_space = gym.spaces.Dict(obs_dict)
+
+    def observation(self, obs):
+        assert 'poses_x' in obs
+        pose = np.array([obs['poses_x'][0], obs['poses_y'][0]])
+        pose = pose[np.newaxis, :]
+        # print(pose)
+        progress = np.clip(self.progress_tracker.get_progress(pose),0,1)
+        obs['progress'] = np.array(progress, dtype=np.float32)
+        # print(obs['progress'] )
+        return obs
+    def reset(self, seed=None, options=None):
+        obs, info = self.env.reset(seed=seed, options=options)
+        pose = np.array([obs['poses_x'][0], obs['poses_y'][0]])
+        pose = pose[np.newaxis, :]
+        
+        self.progress_tracker.reset(pose)
+
+        progress = np.clip(self.progress_tracker.get_progress(pose),0,1)
+        obs['progress'] = np.array(progress, dtype=np.float32)
+        return obs, info
+    
 
 class LidarOccupancyObservation(gym.ObservationWrapper):
     def __init__(self, env, max_range: float = 10.0, resolution: float = 0.08, degree_fow: int = 270):
@@ -144,10 +196,10 @@ class LidarOccupancyObservation(gym.ObservationWrapper):
         observation['lidar_occupancy'] = self._polar2cartesian(scan, scan_angles, self._n_bins, self._resolution)
         # print(observation["lidar_occupancy"])
         return observation
-# randmap = mapno[0]
-# globwaypoints = np.genfromtxt(f"./f1tenth_racetracks/{randmap}/{randmap}_centerline.csv", delimiter=',')
+
+
 class Progress:
-    def __init__(self, track: Track) -> None:
+    def __init__(self, track: Track, lookahead: int = 20) -> None:
         # 
         xs = track.centerline.xs
         ys = track.centerline.ys
@@ -161,6 +213,8 @@ class Progress:
         
         # Extend segment lengths to compute cumulative distance
         self.cumulative_lengths = np.hstack(([0], np.cumsum(self.segment_lengths)))
+        self.previous_closest_idx = 0
+        self.max_lookahead = lookahead
         #print(self.centerline)
         #print(self.centerline.shape)
         #print("***********")
@@ -183,9 +237,24 @@ class Progress:
             t = np.clip(t, 0, 1)
             projections = self.centerline[:-1] + t[:, np.newaxis] * self.segment_vectors
             distances = np.linalg.norm(pose - projections, axis=1)
-            
-            closest_idx = np.argmin(distances)
-            #print(closest_idx)
+            points_len = self.centerline.shape[0]-1  # -1 because of last fake 
+            lookahead_idx = (self.max_lookahead + self.previous_closest_idx) % points_len
+            if self.previous_closest_idx <= lookahead_idx:
+                indices_to_check = list(range(self.previous_closest_idx, lookahead_idx + 1))
+            else:
+                # Otherwise, we need to check both the end and the start of the array
+                indices_to_check = list(range(self.previous_closest_idx, points_len)) \
+                    + list(range(0, lookahead_idx+1))
+            # Extract the relevant distances using fancy indexing
+            subset_distances = distances[indices_to_check]
+
+            # Find the index of the minimum distance within this subset
+            subset_idx = np.argmin(subset_distances)
+
+            # Translate it back to the index in the original distances array
+            closest_idx = indices_to_check[subset_idx]
+            self.previous_closest_idx = closest_idx
+            # print(closest_idx)
             return self.cumulative_lengths[closest_idx] + self.segment_lengths[closest_idx] * t[closest_idx]
         
         return np.array([projected_distance(pose) for pose in pose_points])
@@ -196,8 +265,19 @@ class Progress:
         # print(self.cumulative_lengths[-1])
         progress = progress / (self.cumulative_lengths[-1] + self.segment_lengths[-1])
         # clip between 0 and 1 (it can sometimes happen that its slightly above 1)
+        # print("progress", progress)
         return np.clip(progress, 0, 1)
     
+    def reset(self, pose):
+        rel_pose = pose - self.centerline[:-1]
+        t = np.sum(rel_pose * self.segment_vectors, axis=1) / np.sum(self.segment_vectors**2, axis=1)
+        t = np.clip(t, 0, 1)
+        projections = self.centerline[:-1] + t[:, np.newaxis] * self.segment_vectors
+        distances = np.linalg.norm(pose - projections, axis=1)
+        
+        closest_idx = np.argmin(distances)
+        self.previous_closest_idx = closest_idx
+
 def convert_range(value, input_range, output_range):
     # converts value(s) from range to another range
     # ranges ---> [min, max]
@@ -291,6 +371,7 @@ class ProgressReward(gym.Wrapper):
         observation, info = self.env.reset(seed=seed, options=options)
         pose = np.array([observation['poses_x'][0], observation['poses_y'][0]])
         pose = pose[np.newaxis, :]
+        self.progress_tracker.reset(pose)
         self.current_progress = self.progress_tracker.get_progress(pose)[0]
         return observation, info
 
@@ -302,6 +383,7 @@ class SpinningReset(gym.Wrapper):
         observation, ac, done, truncated , info = self.env.step(action)
         if abs(observation['ang_vels_z'][0]) > self.maxAngularVel:
             done = True
+            observation['collisions'][0] = True
         return observation, ac, done, truncated, info
     
 class MinSpeedReset(gym.Wrapper):
@@ -556,16 +638,27 @@ class RandomStartPosition(gym.Wrapper):
     Places the car in a random position on the track 
     according to the centerline
     """
-    def __init__(self, env):
+    def __init__(self, env, increased = None, likelihood =None ):
         super().__init__(env)
+        assert( (increased is None and likelihood is None) or 
+               (increased is not None and likelihood is not None))
+        assert increased is None or len(increased) == 2, "Assertion failed: Expected length of increased to be 2"
+
         self.cl_x = self.env.track.centerline.xs
         self.cl_y = self.env.track.centerline.ys
+        self.increased = increased
+        self.likelihood = likelihood
         # print(self.cl_x)
     # get random starting position from centerline
     
     def reset(self,seed=None, options=None):
         # print("reset!!")
-        random_index = np.random.randint(len(self.cl_x))
+        # sample according to likelihood either from the whole range or only from the increased range
+        if np.random.uniform() < self.likelihood and self.increased is not None:
+            random_index = np.random.randint(self.increased[0],self.increased[1])
+        else:
+            random_index = np.random.randint(len(self.cl_x))
+        # print(random_index)
         start_xy = (self.cl_x[random_index],self.cl_y[random_index])
         #print(start_xy)
         random_next = (random_index + 1) % len(self.cl_x)
@@ -573,14 +666,20 @@ class RandomStartPosition(gym.Wrapper):
         # get forward direction by pointing at next point
         direction = np.arctan2(next_xy[1] - start_xy[1],
                                 next_xy[0] - start_xy[0])
-        # reset environment
-        #print(self.cl_x[random_index],self.cl_y[random_index])
-        # print()
-        #reset_options = dict(poses=np.array([[self.cl_x[random_index],self.cl_y[random_index],direction],dtype=object))
-        reset_options = dict(poses=np.array([[self.cl_x[random_index],self.cl_y[random_index],direction]]))
+        
+        # some random pertubation to the direction
+        direction = np.random.uniform(direction - np.pi/4, direction + np.pi/4)
+        # some random perputation to the position
+        start_xy = (start_xy[0] + np.random.uniform(-0.1,0.1), # only small perbutation due to the specific track
+                    start_xy[1] + np.random.uniform(-0.1,0.1))
+        
+        
+        
+        
+        reset_options = dict(poses=np.array([[start_xy[0],start_xy[1],direction]]))
         # print(reset_options)
-        assert(not(np.isnan(self.cl_x[random_index])))
-        assert(not(np.isnan(self.cl_y[random_index])))
+        assert(not(np.isnan(start_xy[0])))
+        assert(not(np.isnan(start_xy[0])))
         assert(not(np.isnan(direction)))
         return self.env.reset(options=reset_options)
 
