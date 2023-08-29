@@ -2,7 +2,7 @@ import gymnasium as gym
 import f110_gym
 #from gymnasium.wrappers import RescaleAction
 from code.wrappers import F110_Wrapped, ThrottleMaxSpeedReward, FixSpeedControl, RandomStartPosition, FrameSkip
-from code.wrappers import FlattenAction,SpinningReset,ProgressObservation, LidarOccupancyObservation, VelocityObservationSpace, NormalizeVelocityObservation
+from code.wrappers import MaxLaps, FlattenAction,SpinningReset,ProgressObservation, LidarOccupancyObservation, VelocityObservationSpace, NormalizeVelocityObservation
 from code.wrappers import NormalizePose
 from stable_baselines3.common.env_checker import check_env
 from single_agent_env import ActionDictWrapper
@@ -251,7 +251,7 @@ standard_config = {
     "velocity_weight": 0.0,
     "steering_change_weight": 0.0,
     "velocity_change_weight": 0.0,
-    "pure_progress_weight": 0.0, # has bug
+    "pure_progress_weight": 0.0, 
     "inital_velocity": 1.5,
     "normalize": False,
 }
@@ -259,6 +259,7 @@ standard_config = {
 
 def make_base_env(map= "Infsaal", fixed_speed=None, 
                   random_start=True, reward = "TD", 
+                  train_random_start = True,
                   eval=False, reward_config = standard_config):
     
     env = gym.make("f110_gym:f110-v0",
@@ -272,10 +273,14 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     
     # print(new_env.action_space)
     # print(env.action_space)
-    env = RandomStartPosition(env, increased=[140,170], likelihood = 0.2)
+    if random_start:
+        if train_random_start:
+            env = RandomStartPosition(env, increased=[140,170], likelihood = 0.2)
+        else:
+            env = RandomStartPosition(env)
     # make a spin wrap detector
     # print("HI")
-    env = ReduceSpeedActionSpace(env, 0.5, 2.0)
+    env = ReduceSpeedActionSpace(env, 0.5, 1.8)
     # add a reset if the velocity x +y falls below a threshold
     env = ClipAction(env)
     # env = rewards[reward](env) #ProgressReward(env)
@@ -287,11 +292,14 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
         env = FixSpeedControl(env, fixed_speed=fixed_speed)
     env = FrameSkip(env, skip=5) # make it 20 HZ from 100 HZ
     env = MixedGymReward(env, **reward_config)
-
+    if eval:
+        env = MaxLaps(env, max_laps=1, finished_reward=20)
     env = ProgressObservation(env)
     env = LidarOccupancyObservation(env, resolution=0.25)
     # print(env.observation_space)
-    env = gym.wrappers.FilterObservation(env, filter_keys=["lidar_occupancy","linear_vels_x", "linear_vels_y", "ang_vels_z", "poses_x", "poses_y", "progress"]) #, "angular_vels_z"])
+    env = gym.wrappers.FilterObservation(env, filter_keys=["lidar_occupancy","linear_vels_x", 
+                                                           "linear_vels_y", "ang_vels_z",
+                                                         "poses_x", "poses_y", "poses_theta", "progress"]) #, "angular_vels_z"])
     #TODO! add pose to observation space
     env = VelocityObservationSpace(env)
     env = NormalizeVelocityObservation(env)
@@ -306,7 +314,7 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     
     env = AugmentObservationsPreviousAction(env, inital_velocity=0)
     # print(env.observation_space)
-    env = TimeLimit(env, max_episode_steps=500)
+    env = TimeLimit(env, max_episode_steps=5000)
     return env
 
 from stable_baselines3 import PPO
@@ -323,7 +331,7 @@ if __name__ == "__main__":
     eval_env = make_base_env(fixed_speed=None,
                 random_start =True,
                 eval=True)
-    eval_env = TimeLimit(eval_env, max_episode_steps=100)
+    eval_env = TimeLimit(eval_env, max_episode_steps=1000)
     model = PPO("MultiInputPolicy", eval_env, verbose=1, device='cpu')
     model.learn(total_timesteps=5, progress_bar=True)
     

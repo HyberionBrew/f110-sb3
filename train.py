@@ -15,6 +15,7 @@ import json
 import torch
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import BaseCallback
+from typing import Callable
 #TODO! normalization is only applied process wise, not across processes (i think)
 
 parser = argparse.ArgumentParser(description='Train a model on the F1Tenth Gym environment')
@@ -27,6 +28,25 @@ parser.add_argument('--model_path', type=str, default=None, help='Path to model 
 
 args = parser.parse_args()
 
+def linear_schedule(initial_value: float) -> Callable[[float], float]:
+    """
+    Linear learning rate schedule.
+
+    :param initial_value: Initial learning rate.
+    :return: schedule that computes
+      current learning rate depending on remaining progress
+    """
+    def func(progress_remaining: float) -> float:
+        """
+        Progress will decrease from 1 (beginning) to 0.
+
+        :param progress_remaining:
+        :return: current learning rate
+        """
+        return progress_remaining * initial_value
+
+    return func
+
 def save_parameters_to_file(logdir, args, filename="params.json"):
     """
     Saves the provided argparse arguments to a JSON file.
@@ -35,7 +55,7 @@ def save_parameters_to_file(logdir, args, filename="params.json"):
     :param filename: Name of the output file (default is "params.json")
     """
     params = vars(args)  # Convert argparse.Namespace to dict
-    with open(filename, 'w') as file:
+    with open(f"{logdir}/{filename}", 'w') as file:
         json.dump(params, file, indent=4)
 
 class RewardLoggerCallback(BaseCallback):
@@ -59,11 +79,11 @@ import datetime
 def train(args):
     
     reward_config = {
-        "collision_penalty": -10.0,
-        "progress_weight": 0.0,
-        "raceline_delta_weight": 0.0,
-        "velocity_weight": 1.0,
-        "steering_change_weight": 0.0,
+        "collision_penalty": -50.0,
+        "progress_weight": 0.0, # 1.0
+        "raceline_delta_weight": 0.5, # 0.5
+        "velocity_weight": 0.0,
+        "steering_change_weight": 0.0, # 0.5
         "velocity_change_weight": 0.0,
         "pure_progress_weight": 0.0,
         "inital_velocity": 1.5,
@@ -97,8 +117,8 @@ def train(args):
     #                fixed_speed=args.fixed_speed,
     #                random_start =True,
     #                reward_config = reward_config)
-    checkpoint_callback = CheckpointCallback(save_freq=10_000, 
-                                             save_path='./checkpoints/',
+    checkpoint_callback = CheckpointCallback(save_freq=100_000 // args.num_processes, 
+                                             save_path=f"{args.logdir}/checkpoints/",
                                              name_prefix=f"f110_ppo_{filename}")
 
     partial_make_base_env = partial(make_base_env, 
@@ -125,8 +145,8 @@ def train(args):
     # eval_env = TimeLimit(eval_env, max_episode_steps=500)
     # eval_env = Monitor(eval_env, args.logdir)
     # eval_env = RecordVideo(eval_env, f"{args.logdir}/videos", episode_trigger = lambda episode_number: True)
-    eval_freq = 5_000
-    eval_callback = EvalCallback(eval_env, best_model_save_path=str(f"{args.logdir}/models"), n_eval_episodes=5,
+    eval_freq = 20_000
+    eval_callback = EvalCallback(eval_env, best_model_save_path=str(f"{args.logdir}/models"), n_eval_episodes=10,
                                  log_path=str(f"{args.logdir}/evals"), eval_freq=eval_freq,
                                  deterministic=True, render=False)
     
@@ -135,7 +155,7 @@ def train(args):
     if args.model_path is not None: 
         model = PPO.load(args.model_path, env=train_envs, device=device, tensorboard_log=args.logdir)
     else:
-        model = PPO("MultiInputPolicy", train_envs, verbose=1, device=device, tensorboard_log=args.logdir)
+        model = PPO("MultiInputPolicy", train_envs, verbose=1, device=device,learning_rate=linear_schedule(0.0001), tensorboard_log=args.logdir)
 
     # model = PPO("MultiInputPolicy", train_envs, verbose=1, device=device, tensorboard_log=args.logdir)
     # if load model

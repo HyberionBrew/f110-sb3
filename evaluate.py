@@ -32,7 +32,7 @@ def evaluate(args):
                     fixed_speed=args.fixed_speed,
                     random_start =True,
                     reward_config = standard_config,)
-    eval_env = TimeLimit(eval_env, max_episode_steps=500)
+    eval_env = TimeLimit(eval_env, max_episode_steps=1000)
     
     model = PPO.load(args.model_path)
     episode = 0
@@ -57,6 +57,7 @@ def evaluate(args):
             rew += reward * 0.99
             if truncated:
                 print(steps)
+                print("info")
                 print("Truncated")
 
             if done or truncated:

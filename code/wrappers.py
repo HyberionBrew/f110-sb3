@@ -385,6 +385,31 @@ class SpinningReset(gym.Wrapper):
             done = True
             observation['collisions'][0] = True
         return observation, ac, done, truncated, info
+
+from code.reward import PureProgressReward
+
+class MaxLaps(gym.Wrapper):
+    def __init__(self, env, max_laps=1, finished_reward=20):
+        super().__init__(env)
+        if max_laps!=1:
+            raise NotImplementedError # but should work, untested
+        self.max_laps = max_laps
+        self.finished_reward = finished_reward
+        self.pure_progress_reward = PureProgressReward(env.track)
+    
+    def step(self,action):
+        observation, reward, done, truncated , info = self.env.step(action)
+        # pose = np.array([observation['poses_x'][0], observation['poses_y'][0]])
+        reward = self.pure_progress_reward([observation['poses_x'][0], observation['poses_y'][0]])
+        if reward > self.max_laps:
+            truncated = True
+            reward = self.finished_reward
+        return observation, reward , done or truncated, truncated, info
+    
+    def reset(self, seed=None, options=None):
+        observation, info = self.env.reset(seed=seed, options=options)
+        self.pure_progress_reward.reset(new_pose=[observation['poses_x'][0], observation['poses_y'][0]])
+        return observation, info
     
 class MinSpeedReset(gym.Wrapper):
     def __init__(self, env, minSpeed):
@@ -638,7 +663,7 @@ class RandomStartPosition(gym.Wrapper):
     Places the car in a random position on the track 
     according to the centerline
     """
-    def __init__(self, env, increased = None, likelihood =None ):
+    def __init__(self, env, increased = None, likelihood =None, random_pos=False):
         super().__init__(env)
         assert( (increased is None and likelihood is None) or 
                (increased is not None and likelihood is not None))
@@ -648,16 +673,18 @@ class RandomStartPosition(gym.Wrapper):
         self.cl_y = self.env.track.centerline.ys
         self.increased = increased
         self.likelihood = likelihood
+        self.random_pos = random_pos
         # print(self.cl_x)
     # get random starting position from centerline
     
     def reset(self,seed=None, options=None):
         # print("reset!!")
         # sample according to likelihood either from the whole range or only from the increased range
-        if np.random.uniform() < self.likelihood and self.increased is not None:
-            random_index = np.random.randint(self.increased[0],self.increased[1])
-        else:
-            random_index = np.random.randint(len(self.cl_x))
+        random_index = np.random.randint(len(self.cl_x))
+        if self.increased is not None:
+            if np.random.uniform() < self.likelihood:
+                random_index = np.random.randint(self.increased[0],self.increased[1])
+
         # print(random_index)
         start_xy = (self.cl_x[random_index],self.cl_y[random_index])
         #print(start_xy)
@@ -668,11 +695,12 @@ class RandomStartPosition(gym.Wrapper):
                                 next_xy[0] - start_xy[0])
         
         # some random pertubation to the direction
-        direction = np.random.uniform(direction - np.pi/4, direction + np.pi/4)
-        # some random perputation to the position
-        start_xy = (start_xy[0] + np.random.uniform(-0.1,0.1), # only small perbutation due to the specific track
-                    start_xy[1] + np.random.uniform(-0.1,0.1))
-        
+        if self.random_pos:
+            direction = np.random.uniform(direction - np.pi/4, direction + np.pi/4)
+            # some random perputation to the position
+            start_xy = (start_xy[0] + np.random.uniform(-0.1,0.1), # only small perbutation due to the specific track
+                        start_xy[1] + np.random.uniform(-0.1,0.1))
+            
         
         
         
