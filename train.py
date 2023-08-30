@@ -80,12 +80,13 @@ def train(args):
     
     reward_config = {
         "collision_penalty": -50.0,
-        "progress_weight": 0.0, # 1.0
-        "raceline_delta_weight": 0.5, # 0.5
+        "progress_weight": 1.0, # 1.0
+        "raceline_delta_weight": 0.0, # 0.5
         "velocity_weight": 0.0,
         "steering_change_weight": 0.0, # 0.5
         "velocity_change_weight": 0.0,
         "pure_progress_weight": 0.0,
+        "min_action_weight" : 0.0,
         "inital_velocity": 1.5,
         "normalize": False,
     }

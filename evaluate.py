@@ -18,9 +18,9 @@ standard_config = {
     "progress_weight": 0.0,
     "raceline_delta_weight": 0.0,
     "velocity_weight": 0.0,
-    "steering_change_weight": 0.0,
+    "steering_change_weight": 1.0,
     "velocity_change_weight": 0.0,
-    "pure_progress_weight": 1.0,
+    "pure_progress_weight": 0.0,
     "inital_velocity": 1.5,
     "normalize": False,
 }
@@ -31,8 +31,9 @@ def evaluate(args):
     eval_env = make_base_env(map= args.track,
                     fixed_speed=args.fixed_speed,
                     random_start =True,
-                    reward_config = standard_config,)
-    eval_env = TimeLimit(eval_env, max_episode_steps=1000)
+                    reward_config = standard_config,
+                    eval=True)
+    eval_env = TimeLimit(eval_env, max_episode_steps=500)
     
     model = PPO.load(args.model_path)
     episode = 0
@@ -51,8 +52,8 @@ def evaluate(args):
             # print(action)
             # print(action.shape)
             obs, reward, done, truncated, info = eval_env.step(action)
-            print(reward)
-            print(info)
+            #print(reward)
+            #print(info)
             rewards.append(reward)
             rew += reward * 0.99
             if truncated:

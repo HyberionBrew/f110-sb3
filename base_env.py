@@ -216,7 +216,7 @@ class MixedGymReward(gym.Wrapper):
         #logger.record("reward_TD", rewards[0])
         self.all_rewards = rewards
         info["rewards"] = self.all_rewards
-        
+        info["collision"] = observation['collisions'][0]
         return observation, reward, done, truncated, info
     
     def reset(self, seed=None, options=None):
@@ -246,12 +246,13 @@ rewards = {"TD": ProgressReward,
 
 standard_config = {
     "collision_penalty": -50.0,
-    "progress_weight": 1.0,
+    "progress_weight": 0.0,
     "raceline_delta_weight": 0.0,
     "velocity_weight": 0.0,
     "steering_change_weight": 0.0,
     "velocity_change_weight": 0.0,
-    "pure_progress_weight": 0.0, 
+    "pure_progress_weight": 0.0,
+    "min_action_weight" : 1.0,
     "inital_velocity": 1.5,
     "normalize": False,
 }
@@ -300,7 +301,7 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     env = gym.wrappers.FilterObservation(env, filter_keys=["lidar_occupancy","linear_vels_x", 
                                                            "linear_vels_y", "ang_vels_z",
                                                          "poses_x", "poses_y", "poses_theta", "progress"]) #, "angular_vels_z"])
-    #TODO! add pose to observation space
+
     env = VelocityObservationSpace(env)
     env = NormalizeVelocityObservation(env)
     # env = AddPreviousAction(env)

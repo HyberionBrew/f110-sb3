@@ -13,13 +13,12 @@ from stable_baselines3 import PPO
 
 parser = argparse.ArgumentParser(description='Your script description')
 
-parser.add_argument('--timesteps', type=int, default=10000, help='Number of timesteps to run for')
+parser.add_argument('--timesteps', type=int, default=10_000, help='Number of timesteps to run for')
 parser.add_argument('--sub_sample', type=int, default=10, help='Number of lidar rays to subsample')
 parser.add_argument('--agent', type=str, default='StochasticFTGAgent', help='Name of agent to use')
 parser.add_argument('--map_config', type=str, default='config.yaml', help='Name of map config file')
-parser.add_argument('--dataset_name', type=str, default='dataset.pkl', help='Name of dataset file')
 parser.add_argument('--record', action='store_true', default=False, help='Whether to record the run')
-parser.add_argument('--render', action='store_true', default=True, help='Whether to render the run')
+parser.add_argument('--norender', action='store_false', default=True, dest='render', help='Whether to render the run')
 parser.add_argument('--speed', type=float, default=1.0, help='Mean speed of the car')
 parser.add_argument('--track', type=str, default='Infsaal', help='Track to train on')
 parser.add_argument('--fixed_speed', type=float, default=None, help='Fixing the speed to the provided value')
@@ -50,11 +49,10 @@ def main(args):
                 random_start =True,
                 train_random_start = False,
                 reward_config = eval_config,)
-    # eval_env = TimeLimit(eval_env, max_episode_steps=500)
+    eval_env = TimeLimit(eval_env, max_episode_steps=500)
 
     model = PPO.load(args.model_path)
-    model_name = args.model_path.split("/")[-1].split(".")[0]
-    print(model_name)
+    model_name = args.model_name
     episode = 0
     timesteps = 0
 
@@ -65,6 +63,8 @@ def main(args):
         obs, _ = eval_env.reset()
         done = False
         truncated = False
+        episode += 1
+        print("Episode:", episode)
         while not done and not truncated:
             # print(obs)
             timesteps += 1
@@ -72,16 +72,16 @@ def main(args):
             # del obs["poses_theta"] # TODO! remove bandaid
             action, _ = model.predict(obs)
 
-            print(action)
+            # print(action)
             obs, reward, done, truncated, info = eval_env.step(action)
-            print(obs)
+            # print(obs)
             
             if args.record:
                 # record values into zarr directory
-                with open(args.dataset_name, 'ab') as f:
+                with open(f"datasets/{args.model_name}", 'ab') as f:
                     steering = float(action[0][0])
                     speed = float(action[0][1])
-                    pkl.dump((speed, steering, obs, float(reward), done, truncated, info, timesteps, model_name), f)
+                    pkl.dump((action, obs, float(reward), done, truncated, info, timesteps, model_name), f)
 
             if args.render:
                 eval_env.render()
