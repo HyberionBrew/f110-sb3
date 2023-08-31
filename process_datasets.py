@@ -22,7 +22,7 @@ def main(args):
     #exit()
     #root = zarr.open('trajectories.zarr', mode='w')
 
-    chunks_size = 1000 
+    chunks_size = 10000 
     # Create an extendible array named "actions"
     if not(args.append):
         # write new
@@ -56,6 +56,7 @@ def main(args):
     inital = True
     for file in all_files:
         print(f"Processing {file}")
+        i = 0
         try:
             with open(os.path.join(args.input_folder, file), 'rb') as f:
                 while True:
@@ -95,8 +96,10 @@ def main(args):
                     #print(obs)
                     # print(action)
                     if done or truncated:
+                        i += 1
                         print(done)
                         print(truncated)
+                        print(i)
                         print("-------")
 
         except EOFError:
