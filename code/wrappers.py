@@ -75,7 +75,7 @@ class NormalizePose(gym.ObservationWrapper):
         super().__init__(env)
         self.observation_space['poses_x'] = Box(shape=(1,), low=low, high=high)
         self.observation_space['poses_y'] = Box(shape=(1,), low=low, high=high)
-
+        self.observation_space['poses_theta'] = Box(shape=(1,), low=-np.pi*2, high=np.pi*2)
     def observation(self, observation):
         low = self.observation_space['poses_x'].low
         high = self.observation_space['poses_x'].high
@@ -90,6 +90,10 @@ class NormalizePose(gym.ObservationWrapper):
         observation['poses_y'] = np.clip(observation['poses_y'], low, high)
         # normalise between -1 and 1
         observation['poses_y'] = 2 * ((observation['poses_y'] - low) / (high - low)) - 1
+
+        observation['poses_theta'] = np.clip(observation['poses_theta'], -np.pi*2, np.pi*2)
+        # normalise between -1 and 1
+        observation['poses_theta'] = 2 * ((observation['poses_theta'] + np.pi*2) / (np.pi* 4)) - 1
         return observation
 
 
@@ -150,7 +154,33 @@ class ProgressObservation(gym.ObservationWrapper):
         progress = np.clip(self.progress_tracker.get_progress(pose),0,1)
         obs['progress'] = np.array(progress, dtype=np.float32)
         return obs, info
+
+class DownsampleLaserObservation(gym.ObservationWrapper):
+    def __init__(self,env,max_range:float=10.0, subsample:int=20):
+        super(DownsampleLaserObservation, self).__init__(env)
+        
+        self._max_range = max_range
+        self.subsample = subsample
+        obs_dict = collections.OrderedDict()
+        for k, space in self.observation_space.spaces.items():
+            obs_dict[k] = space
+        # print(self.observation_space["scans"].shape)
+        obs_dict['lidar_occupancy'] = gym.spaces.Box(low=0, high=1, dtype=np.float32,
+                                                shape=(self.observation_space["scans"].shape[1]//subsample,))
+        
+        self.observation_space = gym.spaces.Dict(obs_dict)
+    def observation(self, observation):
+        assert 'scans' in observation
+        scan = observation['scans'][0]
+        # clip scan
+        # to max_range
+        scan = np.clip(scan,0,self._max_range)
+        scan = scan / self._max_range
+        observation['lidar_occupancy'] = scan[::self.subsample]
+        # print(observation["lidar_occupancy"])
+        return observation
     
+
 
 class LidarOccupancyObservation(gym.ObservationWrapper):
     def __init__(self, env, max_range: float = 10.0, resolution: float = 0.08, degree_fow: int = 270):
@@ -239,6 +269,7 @@ class Progress:
             distances = np.linalg.norm(pose - projections, axis=1)
             points_len = self.centerline.shape[0]-1  # -1 because of last fake 
             lookahead_idx = (self.max_lookahead + self.previous_closest_idx) % points_len
+            # wrap around
             if self.previous_closest_idx <= lookahead_idx:
                 indices_to_check = list(range(self.previous_closest_idx, lookahead_idx + 1))
             else:
@@ -381,6 +412,7 @@ class SpinningReset(gym.Wrapper):
         self.maxAngularVel = maxAngularVel #TODO! replace with angular vel
     def step(self,action):
         observation, ac, done, truncated , info = self.env.step(action)
+        # print(observation)
         if abs(observation['ang_vels_z'][0]) > self.maxAngularVel:
             done = True
             observation['collisions'][0] = True
@@ -389,25 +421,39 @@ class SpinningReset(gym.Wrapper):
 from code.reward import PureProgressReward
 
 class MaxLaps(gym.Wrapper):
-    def __init__(self, env, max_laps=1, finished_reward=20):
+    def __init__(self, env, max_laps=1, finished_reward=20, max_lap_time=1000, 
+                 use_org_reward=False):
         super().__init__(env)
         if max_laps!=1:
             raise NotImplementedError # but should work, untested
         self.max_laps = max_laps
         self.finished_reward = finished_reward
         self.pure_progress_reward = PureProgressReward(env.track)
-    
+        self.timestep = 0
+        self.max_lap_time = max_lap_time
+        self.use_org_reward = use_org_reward
+
     def step(self,action):
         observation, reward, done, truncated , info = self.env.step(action)
         # pose = np.array([observation['poses_x'][0], observation['poses_y'][0]])
-        reward = self.pure_progress_reward([observation['poses_x'][0], observation['poses_y'][0]])
-        if reward > self.max_laps:
+        pure_progress = self.pure_progress_reward([observation['poses_x'][0], observation['poses_y'][0]])
+        org_reward = reward
+        reward = 0
+        self.timestep += 1
+        if pure_progress > self.max_laps:
             truncated = True
-            reward = self.finished_reward
+            # clip timestep
+            self.timestep = min(self.timestep, self.max_lap_time)
+            reward = self.max_lap_time - self.timestep
+            if reward == 0:
+                reward = 1
+        if self.use_org_reward:
+            reward = org_reward
         return observation, reward , done or truncated, truncated, info
     
     def reset(self, seed=None, options=None):
         observation, info = self.env.reset(seed=seed, options=options)
+        self.timestep = 0
         self.pure_progress_reward.reset(new_pose=[observation['poses_x'][0], observation['poses_y'][0]])
         return observation, info
     

@@ -32,10 +32,10 @@ def evaluate(args):
                     fixed_speed=args.fixed_speed,
                     random_start =True,
                     reward_config = standard_config,
-                    eval=True)
-    eval_env = TimeLimit(eval_env, max_episode_steps=500)
+                    eval=False)
+    # eval_env = TimeLimit(eval_env, max_episode_steps=500)
     
-    model = PPO.load(args.model_path)
+    model = PPO.load(args.model_path, env=eval_env)
     episode = 0
     while episode < 2000:
         episode += 1
@@ -52,16 +52,23 @@ def evaluate(args):
             # print(action)
             # print(action.shape)
             obs, reward, done, truncated, info = eval_env.step(action)
-            #print(reward)
+            # print(reward)
+            # print(obs)
+            # print(action)
             #print(info)
-            rewards.append(reward)
-            rew += reward * 0.99
+            # print(info)
+            # print(action)
+            print("obs", obs)
+            # print(eval_env.observation_space)
+            rewards.append(obs["poses_theta"])
+            # print("obs reward", reward)
+            rew += reward * 0.99 ** steps
             if truncated:
                 print(steps)
                 print("info")
                 print("Truncated")
 
-            if done or truncated:
+            if done or truncated or steps==500:
                 print(steps)
                 print("Lap done")
                 print("R:", rew)

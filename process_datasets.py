@@ -13,6 +13,11 @@ parser.add_argument('--noappend', action='store_false',
                     default=True,dest='append', help='Whether to append to existing file')
 args = parser.parse_args()
 
+
+obs_keys = ['poses_x', 'poses_y', 'poses_theta', 'linear_vels_x', 
+            'linear_vels_y', 'ang_vels_z', 'progress', 'lidar_occupancy', 
+            'previous_action']
+
 def main(args):
     all_files = [f for f in os.listdir(args.input_folder) if os.path.isfile(os.path.join( args.input_folder, f))]
 
@@ -24,9 +29,14 @@ def main(args):
 
     chunks_size = 10000 
     # Create an extendible array named "actions"
+    if args.append:
+        root = zarr.open('trajectories2.zarr', mode='a')
+    else:
+        root = zarr.open('trajectories2.zarr', mode='w')
+
     if not(args.append):
         # write new
-        root = zarr.open('trajectories.zarr', mode='w')
+        
         actions_array = root.zeros("actions", shape=(0, 2), chunks=(chunks_size, 2), dtype='float32',
                                     overwrite=False, maxshape=(None, 2))
         rewards_array = root.zeros("rewards", shape=(0, 1), chunks=(chunks_size, 1), dtype='float32',
@@ -37,73 +47,94 @@ def main(args):
                                     overwrite=False, maxshape=(None, 1))
         timesteps_array = root.zeros("timesteps", shape=(0, 1), chunks=(chunks_size, 1), dtype='int32',
                                     overwrite=False, maxshape=(None, 1))
-        model_name_array = root.zeros("model_name", shape=(0, 1), chunks=(chunks_size, 1), dtype='str',
+        # dtype = np.dtype("S32")
+        model_name_array = root.zeros("model_name", shape=(0, 1), chunks=(chunks_size, 1), dtype='S32',
+                                    overwrite=False, maxshape=(None, 1))
+        collision_array = root.zeros("collision", shape=(0, 1), chunks=(chunks_size, 1), dtype='bool',
                                     overwrite=False, maxshape=(None, 1))
         obs_group = root.create_group('observations')
-    else:
-        store = zarr.DirectoryStore('trajectories.zarr')
-        root = zarr.group(store=store)
-        actions_array = root['actions']
-        rewards_array = root['rewards']
-        done_array = root['done']
-        truncated_array = root['truncated']
-        timesteps_array = root['timesteps']
-        model_name_array = root['model_name']
-        obs_group = root['observations']
+        for key in obs_keys:
+            if key not in obs_group:
+                obs_group.create_group(key)
+
+
     # Create an extendible array named "observations"
 
-    
-    inital = True
+    # extract from pickle array
+
+    args.append= False
     for file in all_files:
+        actions = []
+        observations_group = []
+        
+        obs_lists = {key: [] for key in obs_keys}
+        rewards = []
+        dones = []
+        truncates = []
+        timesteps = []
+        model_names = []
+        infos = []
+        collisions = []
         print(f"Processing {file}")
-        i = 0
-        try:
-            with open(os.path.join(args.input_folder, file), 'rb') as f:
-                while True:
-                    action, obs, reward, done, truncated, info, timesteps, model_name = pkl.load(f)
-                    # append actions to actions group
-                    actions_array.append(action)
-                    # initalize obs group
-                    if inital and not(args.append):
-                        inital=False
-                        for key, value in obs.items():
-                            max_shape = tuple([None] + list(np.array(value).shape[1:]))
-                            chunk_shape = tuple([chunks_size] + list(np.array(value).shape[1:]))
-                            obs_group.zeros(key, shape=tuple([0] + list(np.array(value).shape[1:])), dtype=np.array(value).dtype,
-                                            maxshape=max_shape, chunks=chunk_shape, overwrite=False)
-                    elif inital and args.append:
-                        inital=False
-                        for key, value in obs.items():
-                            if key in obs_group:  # Check if the dataset exists
-                                # No need to create the dataset. Just open and resize it.
-                                obs_array = obs_group[key]
-                            else:
-                                # assertion error
-                                raise AssertionError(f"Dataset {key} does not exist")
-                    # append values
+        with open(os.path.join(args.input_folder, file), 'rb') as f:
+            while True:
+                try:
+                    action, obs, reward, done, truncated, info, timestep, model_name, collision = pkl.load(f)
+                    actions.append(action[0])
                     for key, value in obs.items():
-                        obs_array = obs_group[key]
-                        obs_array.append(np.array(value))
-                    # append rewards
-                    #print(reward)
-                    rewards_array.append([[reward]])
-                    # append done
-                    done_array.append([[done]])
-                    truncated_array.append([[truncated]])
-                    timesteps_array.append([[timesteps]])
-                    model_name_array.append([[model_name]])
+                        if key == 'lidar_occupancy':
+                            obs_lists[key].append(value) #TODO! fix this inconsistency
+                        else:
+                            obs_lists[key].append(value[0])
+                    rewards.append(reward)
+                    dones.append(done)
+                    truncates.append(truncated)
+                    timesteps.append(timestep)
+                    model_names.append(model_name)
+                    collisions.append(collision)
 
-                    #print(obs)
-                    # print(action)
-                    if done or truncated:
-                        i += 1
-                        print(done)
-                        print(truncated)
-                        print(i)
-                        print("-------")
 
-        except EOFError:
-            print("Done")
+                except EOFError:
+                    print("Done loading data")
+                    break
+
+        print(f"Number of timesteps: {len(timesteps)}")
+        # print keys
+        for key in obs_lists:
+            obs_lists[key] = np.array(obs_lists[key])
+
+        for key, array in obs_lists.items():
+            if args.append:
+                root['observations'][key].append(array)
+            else:
+                root['observations'][key] = array
+        if args.append:
+            root["actions"].append(np.array(actions))
+            root["rewards"].append(np.array(rewards))
+            root["done"].append(np.array(dones))
+            root["truncated"].append(np.array(truncates))
+            root["timestep"].append(np.array(timesteps))
+            root["model_name"].append(np.array(model_names))
+            root["collision"].append(np.array(collisions))
+            print(np.array(model_names)[-1])
+            print(root["model_name"][-1])
+        else:
+            actions = np.array(actions)
+            rewards = np.array(rewards)
+            dones = np.array(dones)
+            truncated = np.array(truncates)
+            timesteps = np.array(timesteps)
+            model_names = np.array(model_names)
+            print(model_names[-1])
+            # model_names = np.char.add(model_names, "_____")
+            root["actions"] = actions
+            root["rewards"] = rewards
+            root["done"] = dones
+            root["truncated"] = truncated
+            root["timestep"] = timesteps
+            root["model_name"] = model_names
+            root["collision"] = np.array(collisions)
+        args.append= True
             
 if __name__ == "__main__":
     main(args)

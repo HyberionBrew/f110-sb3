@@ -25,6 +25,17 @@ parser.add_argument('--fixed_speed', type=float, default=None, help='Fixing the 
 parser.add_argument('--num_processes', type=int, default=1, help='Number of parallel processes')
 parser.add_argument('--reward' , type=str, default="TD", help='Reward function to use')
 parser.add_argument('--model_path', type=str, default=None, help='Path to model to load')
+parser.add_argument('--progress_weight', type=float, default=0.0, help='Weight of progress reward')
+parser.add_argument('--raceline_delta_weight', type=float, default=0.0, help='Weight of raceline delta reward')
+parser.add_argument('--velocity_weight', type=float, default=0.0, help='Weight of velocity reward')
+parser.add_argument('--steering_change_weight', type=float, default=0.0, help='Weight of steering change reward')
+parser.add_argument('--velocity_change_weight', type=float, default=0.0, help='Weight of velocity change reward')
+parser.add_argument('--pure_progress_weight', type=float, default=0.0, help='Weight of pure progress reward')
+parser.add_argument('--min_action_weight', type=float, default=0.0, help='Weight of min action reward')
+parser.add_argument('--min_lidar_ray_weight', type=float, default=0.0, help='Weight of min lidar ray reward')
+parser.add_argument('--inital_velocity', type=float, default=1.5, help='Inital velocity of the car')
+parser.add_argument('--normalize', type=bool, default=False, help='Normalize the reward')
+
 
 args = parser.parse_args()
 
@@ -80,18 +91,21 @@ def train(args):
     
     reward_config = {
         "collision_penalty": -50.0,
-        "progress_weight": 1.0, # 1.0
-        "raceline_delta_weight": 0.0, # 0.5
-        "velocity_weight": 0.0,
-        "steering_change_weight": 0.0, # 0.5
-        "velocity_change_weight": 0.0,
-        "pure_progress_weight": 0.0,
-        "min_action_weight" : 0.0,
-        "inital_velocity": 1.5,
+        "progress_weight": args.progress_weight, # 1.0
+        "raceline_delta_weight": args.raceline_delta_weight, # 0.5
+        "velocity_weight": args.velocity_weight, # 0.5
+        "steering_change_weight": args.steering_change_weight, # 0.5
+        "velocity_change_weight": args.velocity_change_weight, # 0.5
+        "pure_progress_weight": args.pure_progress_weight, # 0.5
+        "min_action_weight" : args.min_action_weight,
+        "min_lidar_ray_weight" : args.min_lidar_ray_weight,
+        "inital_velocity": args.inital_velocity, # 1.5
         "normalize": False,
+        "save_all_rewards": True,
     }
 
-    reward_config_eval = {
+    reward_config_eval = reward_config
+    """{
         "collision_penalty": -10.0,
         "progress_weight": 1.0,
         "raceline_delta_weight": 0.0,
@@ -101,7 +115,7 @@ def train(args):
         "pure_progress_weight": 0.0,
         "inital_velocity": 1.5,
         "normalize": False,
-    }
+    }"""
 
     # build filename string based on reward config
     # if 0 dont include in filename else include with value
@@ -146,9 +160,9 @@ def train(args):
     # eval_env = TimeLimit(eval_env, max_episode_steps=500)
     # eval_env = Monitor(eval_env, args.logdir)
     # eval_env = RecordVideo(eval_env, f"{args.logdir}/videos", episode_trigger = lambda episode_number: True)
-    eval_freq = 20_000
+    eval_freq = 25_000
     eval_callback = EvalCallback(eval_env, best_model_save_path=str(f"{args.logdir}/models"), n_eval_episodes=10,
-                                 log_path=str(f"{args.logdir}/evals"), eval_freq=eval_freq,
+                                 log_path=str(f"{args.logdir}/evals"), eval_freq=eval_freq//args.num_processes,
                                  deterministic=True, render=False)
     
 
@@ -156,12 +170,12 @@ def train(args):
     if args.model_path is not None: 
         model = PPO.load(args.model_path, env=train_envs, device=device, tensorboard_log=args.logdir)
     else:
-        model = PPO("MultiInputPolicy", train_envs, verbose=1, device=device,learning_rate=linear_schedule(0.0001), tensorboard_log=args.logdir)
+        model = PPO("MultiInputPolicy", train_envs, verbose=1, device=device,learning_rate=0.0001, tensorboard_log=args.logdir)
 
     # model = PPO("MultiInputPolicy", train_envs, verbose=1, device=device, tensorboard_log=args.logdir)
     # if load model
     
-    model.learn(total_timesteps=500_000, callback=[eval_callback,RewardLoggerCallback(),checkpoint_callback], progress_bar=True) #, callback=eval_callback)
+    model.learn(total_timesteps=200_000, callback=[eval_callback,RewardLoggerCallback(),checkpoint_callback], progress_bar=True) #, callback=eval_callback)
     # save the model
     model.save(f"{args.logdir}/models/f110_ppo_final_{filename}")
     # model.learn(total_timesteps=500_000, callback=[eval_callback], progress_bar=True) #, callback=eval_callback)

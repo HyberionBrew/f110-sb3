@@ -3,7 +3,7 @@ import f110_gym
 #from gymnasium.wrappers import RescaleAction
 from code.wrappers import F110_Wrapped, ThrottleMaxSpeedReward, FixSpeedControl, RandomStartPosition, FrameSkip
 from code.wrappers import MaxLaps, FlattenAction,SpinningReset,ProgressObservation, LidarOccupancyObservation, VelocityObservationSpace, NormalizeVelocityObservation
-from code.wrappers import NormalizePose
+from code.wrappers import NormalizePose, DownsampleLaserObservation
 from stable_baselines3.common.env_checker import check_env
 from single_agent_env import ActionDictWrapper
 from code.wrappers import ProgressReward
@@ -105,9 +105,9 @@ class MinChangeReward(gym.Wrapper):
         assert collision_penalty >= 0.0, f"penalty must be >=0 and will be subtracted to the reward ({collision_penalty}"
         self._collision_penalty = collision_penalty
         super(MinChangeReward, self).__init__(env)
-        print(self.action_space)
+        #print(self.action_space)
         self._last_action = np.zeros((1, self.action_space.shape[1]))
-        print(self._last_action)
+        #print(self._last_action)
         self._last_action[0][:] = 1.0 # last velocity set to 1.0
 
     def normalize_action(self, action):
@@ -204,19 +204,24 @@ class MixedGymReward(gym.Wrapper):
     def __init__(self, env, **reward_config):
         # add checks if in vectorized env??
         super().__init__(env)
+        # super(MixedGymReward, self).__init__(env)
         self.reward = MixedReward(env, env.track, **reward_config)
         self.all_rewards = []
     def step(self, action):
         observation, reward, done, truncated, info = self.env.step(action)
-        reward, rewards = self.reward(observation, action, observation['collisions'][0], done)
+        reward, rewards = self.reward(observation, action, 
+                                      observation['collisions'][0], done)
         # print(reward)
         # do it with logging frequency
         #logger_instance = get_logger()
         #logger.record("reward", reward)
         #logger.record("reward_TD", rewards[0])
         self.all_rewards = rewards
+        # add final reward to self.all_rewards, which is a dict
+        self.all_rewards["final_reward"] = reward
         info["rewards"] = self.all_rewards
         info["collision"] = observation['collisions'][0]
+        # print("reward",reward)
         return observation, reward, done, truncated, info
     
     def reset(self, seed=None, options=None):
@@ -259,15 +264,19 @@ standard_config = {
 
 
 def make_base_env(map= "Infsaal", fixed_speed=None, 
-                  random_start=True, reward = "TD", 
+                  random_start=True,
                   train_random_start = True,
-                  eval=False, reward_config = standard_config):
+                  eval=False,use_org_reward=False, reward_config = standard_config):
     
     env = gym.make("f110_gym:f110-v0",
                     config = dict(map=map,
                     num_agents=1),
-                    render_mode="human_fast",
+                    render_mode="human",
                     ) #integrator=Integrator.euler)
+    #TODO!
+    # cap poses_theta
+    # store in info original x_poses and so on
+    
     #print(env.action_space)
     #print(env.min_action)
     # env.min_action = np.array([-1.0, -1.0])
@@ -279,6 +288,8 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
             env = RandomStartPosition(env, increased=[140,170], likelihood = 0.2)
         else:
             env = RandomStartPosition(env)
+    else:
+        env = RandomStartPosition(env, increased=[0,1], likelihood = 1.0)
     # make a spin wrap detector
     # print("HI")
     env = ReduceSpeedActionSpace(env, 0.5, 1.8)
@@ -286,20 +297,24 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     env = ClipAction(env)
     # env = rewards[reward](env) #ProgressReward(env)
     env = SpinningReset(env, maxAngularVel= 5.0)
-   
+    # print(env.observation_space)
     # env = MinSpeedReset(env, min_speed=0.4)
     #env = ActionDictWrapper(env, fixed_speed=fixed_speed)
     if fixed_speed is not None:
         env = FixSpeedControl(env, fixed_speed=fixed_speed)
     env = FrameSkip(env, skip=5) # make it 20 HZ from 100 HZ
     env = MixedGymReward(env, **reward_config)
+    # print current reward
+    # print(env.reward)
     if eval:
-        env = MaxLaps(env, max_laps=1, finished_reward=20)
+        env = MaxLaps(env, max_laps=1, finished_reward=20, max_lap_time=1000, use_org_reward=use_org_reward)
     env = ProgressObservation(env)
-    env = LidarOccupancyObservation(env, resolution=0.25)
+    # env = LidarOccupancyObservation(env, resolution=0.25)
+    env = DownsampleLaserObservation(env, subsample=20)
     # print(env.observation_space)
+    # fix theta observation space! TODO!
     env = gym.wrappers.FilterObservation(env, filter_keys=["lidar_occupancy","linear_vels_x", 
-                                                           "linear_vels_y", "ang_vels_z",
+                                                           "linear_vels_y", "ang_vels_z", # ])
                                                          "poses_x", "poses_y", "poses_theta", "progress"]) #, "angular_vels_z"])
 
     env = VelocityObservationSpace(env)
@@ -314,7 +329,8 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     env = RescaleAction2(env, min_action=-1.0,max_action= 1.0)
     
     env = AugmentObservationsPreviousAction(env, inital_velocity=0)
-    # print(env.observation_space)
+    print(env.observation_space)
+    print(env.action_space)
     env = TimeLimit(env, max_episode_steps=5000)
     return env
 

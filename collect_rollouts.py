@@ -48,14 +48,17 @@ def main(args):
                 fixed_speed=args.fixed_speed,
                 random_start =True,
                 train_random_start = False,
-                reward_config = eval_config,)
-    eval_env = TimeLimit(eval_env, max_episode_steps=500)
+                reward_config = eval_config,
+                eval=True,
+                use_org_reward=True,)
+    eval_env = TimeLimit(eval_env, max_episode_steps=1000)
 
     model = PPO.load(args.model_path)
     model_name = args.model_name
     episode = 0
     timesteps = 0
-
+    with open(f"datasets2/{args.model_name}", 'wb') as f:
+        pass
 
 
     while timesteps < args.timesteps:
@@ -65,6 +68,11 @@ def main(args):
         truncated = False
         episode += 1
         print("Episode:", episode)
+        rewards = []
+        print(timesteps)
+        episode_data = []
+        import time 
+        start = time.time()
         while not done and not truncated:
             # print(obs)
             timesteps += 1
@@ -75,24 +83,24 @@ def main(args):
             # print(action)
             obs, reward, done, truncated, info = eval_env.step(action)
             # print(obs)
-            
+            # print(info)
+
+            rewards.append(reward)
             if args.record:
                 # record values into zarr directory
-                with open(f"datasets/{args.model_name}", 'ab') as f:
-                    steering = float(action[0][0])
-                    speed = float(action[0][1])
-                    pkl.dump((action, obs, float(reward), done, truncated, info, timesteps, model_name), f)
+                with open(f"datasets2/{args.model_name}", 'ab') as f:
+                    pkl.dump((action, obs, float(reward), done, truncated, info, timesteps, model_name, info["collision"]), f)
 
             if args.render:
                 eval_env.render()
                 if done or truncated:
-                    print("Lap done")
-
-                if done or truncated:
-                    print(timesteps)
-                    print("Lap done")
-                    print("R:", reward)
+                    #print(timesteps)
+                    #print("Lap done")
+                    #print("R:", reward)
+                    plt.plot(rewards)
                     plt.show()
-                
+        
+        # end = time.time()
+        #print("Time:", end-start)
 if __name__ == "__main__":
     main(args)

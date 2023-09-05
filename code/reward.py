@@ -34,7 +34,6 @@ class PureProgressReward(object):
         self.previous_progress = None
         self.progress_tracker = Progress(track)
         self.laps = 0
-        self.i = 0
     def reset(self, new_pose: Tuple[float, float]):
         pose = np.array(new_pose)
         # print(pose)
@@ -83,10 +82,11 @@ class ProgressReward(object):
         new_progress = self.progress_tracker.get_progress(pose)[0]
         delta_progress = 0
         # in this case we just crossed the finishing line!
-        if (new_progress - self.current_progress) < -0.5:
+        if (new_progress - self.current_progress) < -0.9:
             delta_progress = (new_progress + 1) - self.current_progress
         else:
             delta_progress = new_progress - self.current_progress
+        # delta_progress = delta_progress **2
         delta_progress = max(delta_progress, 0)
         delta_progress *= 100
         self.current_progress = new_progress
@@ -151,7 +151,6 @@ class MinActionReward(object):
         reward = inverse_steering
         return reward
     
-
 """
 @brief    Reward function based on the change in steering angle
 """
@@ -167,6 +166,7 @@ class MinSteeringChangeReward(object):
         #print ("delta", delta)
 
         normalized = delta / (self.high - self.low)
+        assert(normalized<=1.0)
         #print(self.high, self.low)
         inverse = 1.0 - normalized
         delta = (inverse) **2 # prefer smaller shifts
@@ -183,7 +183,7 @@ class MinSteeringChangeReward(object):
 @brief    Reward function based on the change in velocity
 """
 class MinVelocityChangeReward(object):
-    def __init__(self, low, high, inital_velocity=1.5):
+    def __init__(self, low, high, inital_velocity=1.5): #TODO! fix intial_velocity
         self.low = low
         self.high = high
         self.inital_velocity = inital_velocity
@@ -217,6 +217,11 @@ class VelocityReward(object):
         return velocity
 
 
+"""
+@brief Sparse laptime reward function
+"""
+class LaptimeReward(object):
+    pass
 
 class MixedReward(object):
     def __init__(self, env: gym.Env,
@@ -231,6 +236,7 @@ class MixedReward(object):
                  min_lidar_ray_weight: float = 0.0,
                  pure_progress_weight: float = 0.0,
                  inital_velocity: float = 1.5,
+                 save_all_rewards: bool = False,
                  normalize: bool = True ,
                  ):
         # print the args used
@@ -282,6 +288,7 @@ class MixedReward(object):
 
         # for each reward instantiate a normalization object
         self.normalizers = []
+        self.save_all_rewards = save_all_rewards
         for reward in self.rewards:
             self.normalizers.append(NormalizeReward(env))
 
@@ -302,29 +309,29 @@ class MixedReward(object):
         
         #print(rewards)
         #print(self.weights)
-        if self.progress_weight > 0.0001:
+        if self.progress_weight > 0.0001 or self.save_all_rewards:
             progress_reward = self.progress_reward(pose)
             # print("progress_reward", progress_reward)
             rewards[0] = progress_reward
-        if self.raceline_delta_weight > 0.0001:
+        if self.raceline_delta_weight > 0.0001 or self.save_all_rewards:
             raceline_reward = self.raceline_reward(pose)
             rewards[1] = raceline_reward
-        if self.velocity_weight > 0.0001:
+        if self.velocity_weight > 0.0001 or self.save_all_rewards:
             velocity_reward = self.velocity_reward(obs['linear_vels_x'][0], obs['linear_vels_y'][0])
             rewards[2] = velocity_reward
-        if self.steering_change_weight > 0.0001:
+        if self.steering_change_weight > 0.0001 or self.save_all_rewards:
             steering_change_reward = self.steering_change_reward(action[0])
             rewards[3] = steering_change_reward
-        if self.velocity_change_weight > 0.0001:
+        if self.velocity_change_weight > 0.0001 or self.save_all_rewards:
             velocity_change_reward = self.velocity_change_reward(obs['linear_vels_x'][0], obs['linear_vels_y'][0]) 
             rewards[4] = velocity_change_reward
-        if self.pure_progress_weight > 0.0001:
+        if self.pure_progress_weight > 0.0001 or self.save_all_rewards:
             pure_progress_reward = self.pure_progress_reward(pose)
             rewards[5] = pure_progress_reward
-        if self.min_action_weight > 0.0001:
+        if self.min_action_weight > 0.0001 or self.save_all_rewards:
             min_action_reward = self.min_action_reward(action[0])
             rewards[6] = min_action_reward
-        if self.min_lidar_ray_weight > 0.0001:
+        if self.min_lidar_ray_weight > 0.0001 or self.save_all_rewards:
             min_lidar_ray_reward = self.min_lidar_ray_reward(obs['scans'][0])
             rewards[7] = min_lidar_ray_reward
         #print(" [ProgressReward, RacelineDeltaReward, VelocityReward, MinSteeringChangeReward, MinVelocityChangeReward]")
@@ -337,15 +344,18 @@ class MixedReward(object):
                 else:
                     # normalize the reward
                     rewards[i] = self.normalizers[i].step(rewards[i], done) 
+        
+        rewards_dict = {}
+        for i, rew_name in enumerate(self.rewards_name):
+            rewards_dict[str(rew_name)] = rewards[i]
         #print("after norm", rewards) # now normalized
         rewards = rewards* self.weights
         #print("after weighting", rewards)
         # sum rewards
         reward = np.sum(rewards)
         # create dict from rewards
-        rewards_dict = {}
-        for i, rew_name in enumerate(self.rewards_name):
-            rewards_dict[str(rew_name)] = rewards[i]
+
+
         #print("rewards", reward)
         # now apply penalty for collision
         if collision:
