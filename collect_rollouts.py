@@ -57,7 +57,7 @@ def main(args):
     model_name = args.model_name
     episode = 0
     timesteps = 0
-    with open(f"datasets2/{args.model_name}", 'wb') as f:
+    with open(f"datasets4/{args.model_name}", 'wb') as f:
         pass
 
 
@@ -73,6 +73,9 @@ def main(args):
         episode_data = []
         import time 
         start = time.time()
+        actions = []
+        steerings = []
+        vels = []
         while not done and not truncated:
             # print(obs)
             timesteps += 1
@@ -84,12 +87,16 @@ def main(args):
             obs, reward, done, truncated, info = eval_env.step(action)
             # print(obs)
             # print(info)
-
+            steerings.append(info["action_raw"][0][0])
+            vels.append(info["action_raw"][0][1])
+            #print(actions)
             rewards.append(reward)
             if args.record:
                 # record values into zarr directory
-                with open(f"datasets2/{args.model_name}", 'ab') as f:
-                    pkl.dump((action, obs, float(reward), done, truncated, info, timesteps, model_name, info["collision"]), f)
+                # print(info["observations"])
+                # exit()
+                with open(f"datasets4/{args.model_name}", 'ab') as f:
+                    pkl.dump((info["action_delta"], info["observations"], float(reward), done, truncated, info, timesteps, model_name, info["collision"]), f)
 
             if args.render:
                 eval_env.render()
@@ -97,6 +104,10 @@ def main(args):
                     #print(timesteps)
                     #print("Lap done")
                     #print("R:", reward)
+                    plt.plot(steerings)
+                    plt.show()
+                    plt.plot(vels)
+                    plt.show()
                     plt.plot(rewards)
                     plt.show()
         

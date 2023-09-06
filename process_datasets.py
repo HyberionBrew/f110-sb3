@@ -30,9 +30,9 @@ def main(args):
     chunks_size = 10000 
     # Create an extendible array named "actions"
     if args.append:
-        root = zarr.open('trajectories2.zarr', mode='a')
+        root = zarr.open('trajectories4.zarr', mode='a')
     else:
-        root = zarr.open('trajectories2.zarr', mode='w')
+        root = zarr.open('trajectories4.zarr', mode='w')
 
     if not(args.append):
         # write new

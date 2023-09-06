@@ -90,7 +90,7 @@ import datetime
 def train(args):
     
     reward_config = {
-        "collision_penalty": -50.0,
+        "collision_penalty": -200.0,
         "progress_weight": args.progress_weight, # 1.0
         "raceline_delta_weight": args.raceline_delta_weight, # 0.5
         "velocity_weight": args.velocity_weight, # 0.5
