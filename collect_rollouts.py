@@ -2,7 +2,7 @@ import gymnasium
 from argparse import Namespace
 import yaml
 import numpy as np
-
+import torch
 import pickle as pkl
 from absl import flags, app
 
@@ -57,7 +57,7 @@ def main(args):
     model_name = args.model_name
     episode = 0
     timesteps = 0
-    with open(f"datasets4/{args.model_name}", 'wb') as f:
+    with open(f"datasets5/{args.model_name}", 'wb') as f:
         pass
 
 
@@ -76,27 +76,51 @@ def main(args):
         actions = []
         steerings = []
         vels = []
+        tensor_obs = model.policy.obs_to_tensor(obs)[0]
+        #print("...")
+        #print(action)
+        #print(tensor_obs)
+        with torch.no_grad():
+            print(tensor_obs)
+            action, _, log_prob = model.policy.forward(tensor_obs, deterministic=True)# [0]
+        obs, reward, done, truncated, info = eval_env.step(action)
         while not done and not truncated:
             # print(obs)
             timesteps += 1
             # remove key poses_theta from obs
             # del obs["poses_theta"] # TODO! remove bandaid
-            action, _ = model.predict(obs)
-
+            # action, _ = model.predict(obs) #deterministic=True)
+            tensor_obs = model.policy.obs_to_tensor(obs)[0]
+            #print("...")
+            #print(action)
+            #print(tensor_obs)
+            with torch.no_grad():
+                print(tensor_obs)
+                action, _, log_prob = model.policy.forward(tensor_obs, deterministic=True)# [0]
+            print(action)
+            action = action.squeeze(0).detach().numpy()
+            log_prob = float(log_prob.detach().numpy()[0])
             # print(action)
+
+            if args.record:
+                # record values into zarr directory
+                # print(info["observations"])
+                # exit()
+                with open(f"datasets5/{args.model_name}", 'ab') as f:
+                    #if timesteps > args.timesteps:
+                    #    done = True
+                    #    truncated = True
+                    pkl.dump((action, info["observations"], float(reward), done, truncated, log_prob, timesteps, model_name, info["collision"]), f)
+
+
+
             obs, reward, done, truncated, info = eval_env.step(action)
             # print(obs)
             # print(info)
             steerings.append(info["action_raw"][0][0])
             vels.append(info["action_raw"][0][1])
-            #print(actions)
+            # print(action)
             rewards.append(reward)
-            if args.record:
-                # record values into zarr directory
-                # print(info["observations"])
-                # exit()
-                with open(f"datasets4/{args.model_name}", 'ab') as f:
-                    pkl.dump((info["action_delta"], info["observations"], float(reward), done, truncated, info, timesteps, model_name, info["collision"]), f)
 
             if args.render:
                 eval_env.render()
@@ -110,7 +134,9 @@ def main(args):
                     plt.show()
                     plt.plot(rewards)
                     plt.show()
-        
+            # TODO! remove this
+            #if timesteps > args.timesteps:
+            #    break
         # end = time.time()
         #print("Time:", end-start)
 if __name__ == "__main__":

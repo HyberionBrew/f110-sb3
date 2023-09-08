@@ -22,7 +22,7 @@ parser = argparse.ArgumentParser(description='Train a model on the F1Tenth Gym e
 parser.add_argument('--logdir', type=str, default='logs', help='Logging directory')
 parser.add_argument('--track', type=str, default='Infsaal', help='Track to train on')
 parser.add_argument('--fixed_speed', type=float, default=None, help='Fixing the speed to the provided value')
-parser.add_argument('--num_processes', type=int, default=1, help='Number of parallel processes')
+parser.add_argument('--num_processes', type=int, default=4, help='Number of parallel processes')
 parser.add_argument('--reward' , type=str, default="TD", help='Reward function to use')
 parser.add_argument('--model_path', type=str, default=None, help='Path to model to load')
 parser.add_argument('--progress_weight', type=float, default=0.0, help='Weight of progress reward')
@@ -90,7 +90,7 @@ import datetime
 def train(args):
     
     reward_config = {
-        "collision_penalty": -200.0,
+        "collision_penalty": -100.0,
         "progress_weight": args.progress_weight, # 1.0
         "raceline_delta_weight": args.raceline_delta_weight, # 0.5
         "velocity_weight": args.velocity_weight, # 0.5

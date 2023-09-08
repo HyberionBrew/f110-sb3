@@ -52,6 +52,9 @@ def main(args):
                                     overwrite=False, maxshape=(None, 1))
         collision_array = root.zeros("collision", shape=(0, 1), chunks=(chunks_size, 1), dtype='bool',
                                     overwrite=False, maxshape=(None, 1))
+        log_prob_array = root.zeros("log_prob", shape=(0, 1), chunks=(chunks_size, 1), dtype='float32',
+                                    overwrite=False, maxshape=(None, 1))
+        
         obs_group = root.create_group('observations')
         for key in obs_keys:
             if key not in obs_group:
@@ -73,13 +76,13 @@ def main(args):
         truncates = []
         timesteps = []
         model_names = []
-        infos = []
+        log_probs = []
         collisions = []
         print(f"Processing {file}")
         with open(os.path.join(args.input_folder, file), 'rb') as f:
             while True:
                 try:
-                    action, obs, reward, done, truncated, info, timestep, model_name, collision = pkl.load(f)
+                    action, obs, reward, done, truncated, log_prob, timestep, model_name, collision = pkl.load(f)
                     actions.append(action[0])
                     for key, value in obs.items():
                         if key == 'lidar_occupancy':
@@ -92,7 +95,7 @@ def main(args):
                     timesteps.append(timestep)
                     model_names.append(model_name)
                     collisions.append(collision)
-
+                    log_probs.append(log_prob)
 
                 except EOFError:
                     print("Done loading data")
@@ -116,6 +119,7 @@ def main(args):
             root["timestep"].append(np.array(timesteps))
             root["model_name"].append(np.array(model_names))
             root["collision"].append(np.array(collisions))
+            root["log_prob"].append(np.array(log_probs))
             print(np.array(model_names)[-1])
             print(root["model_name"][-1])
         else:
@@ -134,6 +138,7 @@ def main(args):
             root["timestep"] = timesteps
             root["model_name"] = model_names
             root["collision"] = np.array(collisions)
+            root["log_prob"] = np.array(log_probs)
         args.append= True
             
 if __name__ == "__main__":

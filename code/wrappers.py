@@ -174,6 +174,8 @@ class DownsampleLaserObservation(gym.ObservationWrapper):
         scan = observation['scans'][0]
         # clip scan
         # to max_range
+        #print("scan", scan.shape)
+        #print("observations, pose", observation['poses_x'], observation['poses_y'], observation['poses_theta'])
         scan = np.clip(scan,0,self._max_range)
         scan = scan / self._max_range
         observation['lidar_occupancy'] = scan[::self.subsample]
