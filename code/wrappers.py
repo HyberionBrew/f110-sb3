@@ -132,17 +132,22 @@ class ProgressObservation(gym.ObservationWrapper):
         obs_dict = collections.OrderedDict()
         for k, space in self.observation_space.spaces.items():
             obs_dict[k] = space
-        obs_dict["progress"] = Box(shape=(1,), low=0, high=1)
+        obs_dict["progress_sin"] = Box(shape=(1,), low=-1, high=1)
+        obs_dict["progress_cos"] = Box(shape=(1,), low=-1, high=1)
         self.observation_space = gym.spaces.Dict(obs_dict)
 
     def observation(self, obs):
         assert 'poses_x' in obs
+        assert 'poses_y' in obs
         pose = np.array([obs['poses_x'][0], obs['poses_y'][0]])
         pose = pose[np.newaxis, :]
         # print(pose)
         progress = np.clip(self.progress_tracker.get_progress(pose),0,1)
-        obs['progress'] = np.array(progress, dtype=np.float32)
+        # obs['progress'] = np.array(progress, dtype=np.float32)
         # print(obs['progress'] )
+        angle = 2 * np.pi *progress
+        obs['progress_sin'] = np.sin(angle).astype(np.float32)
+        obs['progress_cos'] = np.cos(angle).astype(np.float32)
         return obs
     def reset(self, seed=None, options=None):
         obs, info = self.env.reset(seed=seed, options=options)
@@ -152,7 +157,10 @@ class ProgressObservation(gym.ObservationWrapper):
         self.progress_tracker.reset(pose)
 
         progress = np.clip(self.progress_tracker.get_progress(pose),0,1)
-        obs['progress'] = np.array(progress, dtype=np.float32)
+        angle = 2 * np.pi * progress
+        
+        obs['progress_sin'] = np.sin(angle).astype(np.float32)
+        obs['progress_cos'] = np.cos(angle).astype(np.float32)
         return obs, info
 
 class DownsampleLaserObservation(gym.ObservationWrapper):
@@ -706,6 +714,17 @@ class F110_Wrapped(gym.Wrapper):
 
 from f110_gym.envs.track import Track
 
+class PoseStartPosition(gym.Wrapper):
+    """
+    Places the car on the predefined pose (handed down from reset options)
+    """
+    def __init__(self, env):
+        super().__init__(env)
+    def reset(self,seed=None, options=None):
+        # print(options)
+        return self.env.reset(options=options)
+import warnings
+
 class RandomStartPosition(gym.Wrapper):
     """
     Places the car in a random position on the track 
@@ -713,7 +732,7 @@ class RandomStartPosition(gym.Wrapper):
     """
     def __init__(self, env, increased = None, likelihood =None, random_pos=False):
         super().__init__(env)
-        assert( (increased is None and likelihood is None) or 
+        assert((increased is None and likelihood is None) or 
                (increased is not None and likelihood is not None))
         assert increased is None or len(increased) == 2, "Assertion failed: Expected length of increased to be 2"
 
@@ -749,10 +768,18 @@ class RandomStartPosition(gym.Wrapper):
             start_xy = (start_xy[0] + np.random.uniform(-0.1,0.1), # only small perbutation due to the specific track
                         start_xy[1] + np.random.uniform(-0.1,0.1))
             
+        # print User warning if poses containted in options
+        if options is None:
+            options = {} 
         
-        
-        
-        reset_options = dict(poses=np.array([[start_xy[0],start_xy[1],direction]]))
+        if "poses" in options: 
+            warnings.warn("Only velocity will be set")   
+        if "velocity" not in options:
+            warnings.warn("Starting with velocity 0")
+            options["velocity"] = 0.0
+
+        reset_options = dict(poses=np.array([[start_xy[0],start_xy[1],direction]]),
+                             velocity=np.array([options["velocity"]]))
         # print(reset_options)
         assert(not(np.isnan(start_xy[0])))
         assert(not(np.isnan(start_xy[0])))

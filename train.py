@@ -35,7 +35,7 @@ parser.add_argument('--min_action_weight', type=float, default=0.0, help='Weight
 parser.add_argument('--min_lidar_ray_weight', type=float, default=0.0, help='Weight of min lidar ray reward')
 parser.add_argument('--inital_velocity', type=float, default=1.5, help='Inital velocity of the car')
 parser.add_argument('--normalize', type=bool, default=False, help='Normalize the reward')
-
+parser.add_argument('--total_timesteps', type=int, default=200_000, help='Total timesteps to train for')
 
 args = parser.parse_args()
 
@@ -132,7 +132,7 @@ def train(args):
     #                fixed_speed=args.fixed_speed,
     #                random_start =True,
     #                reward_config = reward_config)
-    checkpoint_callback = CheckpointCallback(save_freq=100_000 // args.num_processes, 
+    checkpoint_callback = CheckpointCallback(save_freq=50_000 // args.num_processes, 
                                              save_path=f"{args.logdir}/checkpoints/",
                                              name_prefix=f"f110_ppo_{filename}")
 
@@ -175,7 +175,7 @@ def train(args):
     # model = PPO("MultiInputPolicy", train_envs, verbose=1, device=device, tensorboard_log=args.logdir)
     # if load model
     
-    model.learn(total_timesteps=200_000, callback=[eval_callback,RewardLoggerCallback(),checkpoint_callback], progress_bar=True) #, callback=eval_callback)
+    model.learn(total_timesteps=args.total_timesteps, callback=[eval_callback,RewardLoggerCallback(),checkpoint_callback], progress_bar=True) #, callback=eval_callback)
     # save the model
     model.save(f"{args.logdir}/models/f110_ppo_final_{filename}")
     # model.learn(total_timesteps=500_000, callback=[eval_callback], progress_bar=True) #, callback=eval_callback)

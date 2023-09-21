@@ -23,7 +23,7 @@ parser.add_argument('--speed', type=float, default=1.0, help='Mean speed of the 
 parser.add_argument('--track', type=str, default='Infsaal', help='Track to train on')
 parser.add_argument('--fixed_speed', type=float, default=None, help='Fixing the speed to the provided value')
 # model path
-parser.add_argument('--model_path', type=str, default='/home/fabian/f110_rl/f110-sb3/logs101/progress_weight/checkpoints/f110_ppo_collision_penalty_-100.0_progress_weight_1.0_inital_velocity_1.5_save_all_rewards_True_11-09-2023-08-43-38_300000_steps.zip', help='Logging directory')
+parser.add_argument('--model_path', type=str, default='logs/models/best_model.zip', help='Logging directory')
 parser.add_argument('--model_name', type=str, default='progress', help='The model that was used')
 parser.add_argument('--deterministic', action='store_true', default=False, help='Whether to use deterministic actions')
 args = parser.parse_args()
@@ -44,28 +44,45 @@ import matplotlib.pyplot as plt
 import zarr
 import pickle as pkl
 
+def float_range(start, stop, step):
+    while start < stop:
+        yield start
+        start += step
+
 def main(args):
     eval_env = make_base_env(map= args.track,
                 fixed_speed=args.fixed_speed,
-                random_start =True,
-                train_random_start = False,
+                random_start =False,
+                pose_start= True,
                 reward_config = eval_config,
-                eval=False,
+                eval=True,
                 use_org_reward=True,)
     eval_env = TimeLimit(eval_env, max_episode_steps=1000)
 
-    model = PPO.load(args.model_path)
-    model_name = args.model_name
-    episode = 0
-    timesteps = 0
-    with open(f"datasets921/{args.model_name}", 'wb') as f:
+    #model = PPO.load(args.model_path)
+    #model_name = args.model_name
+    #episode = 0
+    #timesteps = 0
+    with open(f"evaluation_dataset/eval_dataset.pkl", 'wb') as f:
         pass
-
-
+    granularity = 0.3
+    for x_pose in float_range(-4.65, 2.58, granularity):
+        for y_pose in float_range(-1.5, 10, granularity):
+            obs, _ = eval_env.reset(options=dict(poses=np.array([[x_pose,y_pose,0.0]])))
+            if args.render:
+                eval_env.render()
+            # now lets take one 0,0 action
+            action = np.array([0.0,0.0])
+            obs, reward, done, truncated, info = eval_env.step(action)
+            if args.render:
+                eval_env.render()
+            if args.record:
+                with open(f"evaluation_dataset/eval_dataset.pkl", 'ab') as f:
+                    pkl.dump((action, info["observations"], float(reward), done, truncated, -1.0, 0, "evaluation", info["collision"]), f)
+    """
     while timesteps < args.timesteps:
 
         obs, _ = eval_env.reset()
-        # print(obs)
         done = False
         truncated = False
         episode += 1
@@ -78,17 +95,14 @@ def main(args):
         actions = []
         steerings = []
         vels = []
-        progress_sin = []
-        progress_cos = []
         tensor_obs = model.policy.obs_to_tensor(obs)[0]
         #print("...")
         #print(action)
         #print(tensor_obs)
         with torch.no_grad():
             # print(tensor_obs)
-            #action, _, log_prob = model.policy.forward(tensor_obs, deterministic=args.deterministic)# [0]
-            #action = action[0].cpu().numpy()
-            action = np.array([0.0,0.0]) # just a zero zero action to get the juicy infos
+            action, _, log_prob = model.policy.forward(tensor_obs, deterministic=args.deterministic)# [0]
+            action = action[0].cpu().numpy()
         
         # eval_env.render()
         while not done and not truncated:
@@ -102,8 +116,6 @@ def main(args):
             #print(action)
             #print(tensor_obs)
             obs, reward, done, truncated, info = eval_env.step(action)
-            # print(obs)
-
             with torch.no_grad():
                 # print(tensor_obs)
                 action, _, log_prob = model.policy.forward(tensor_obs, deterministic=args.deterministic)# [0]
@@ -116,12 +128,12 @@ def main(args):
                 # record values into zarr directory
                 # print(info["observations"])
                 # exit()
-                with open(f"datasets921/{args.model_name}", 'ab') as f:
+                with open(f"datasets5/{args.model_name}", 'ab') as f:
                     #if timesteps > args.timesteps:
                     #    done = True
                     #    truncated = True
                     
-                    pkl.dump((action, info["observations"], float(reward), done, truncated, log_prob, timesteps, model_name, info["collision"], info["action_raw"]), f)
+                    pkl.dump((action, info["observations"], float(reward), done, truncated, log_prob, timesteps, model_name, info["collision"]), f)
             #if timesteps > args.timesteps:
             #    break
             
@@ -129,26 +141,17 @@ def main(args):
             # obs, reward, done, truncated, info = eval_env.step(action)
             # print(obs)
             # print(info)
-            # exit()
-            progress_sin.append(info["observations"]["progress_sin"])
-            progress_cos.append(info["observations"]["progress_cos"])
             steerings.append(info["action_raw"][0][0])
-            # vels.append(info["action_raw"][0][1])
-            vels.append(info["observations"]["linear_vels_x"])
+            vels.append(info["action_raw"][0][1])
             # print(action)
             rewards.append(reward)
-            #print(info["observations"])
-            #if timesteps == 4:
-            #    exit()
+
             if args.render:
                 eval_env.render()
                 if done or truncated:
                     #print(timesteps)
                     #print("Lap done")
                     #print("R:", reward)
-                    plt.plot(progress_sin)
-                    plt.plot(progress_cos)
-                    plt.show()
                     plt.plot(steerings)
                     plt.show()
                     plt.plot(vels)
@@ -160,5 +163,6 @@ def main(args):
             #    break
         # end = time.time()
         #print("Time:", end-start)
+        """
 if __name__ == "__main__":
     main(args)

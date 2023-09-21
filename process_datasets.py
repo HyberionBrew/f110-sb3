@@ -15,7 +15,7 @@ args = parser.parse_args()
 
 
 obs_keys = ['poses_x', 'poses_y', 'poses_theta', 'linear_vels_x', 
-            'linear_vels_y', 'ang_vels_z', 'progress', 'lidar_occupancy', 
+            'linear_vels_y', 'ang_vels_z', 'progress_sin','progress_cos','lidar_occupancy', 
             'previous_action']
 
 def main(args):
@@ -30,15 +30,18 @@ def main(args):
     chunks_size = 10000 
     # Create an extendible array named "actions"
     if args.append:
-        root = zarr.open('trajectories4.zarr', mode='a')
+        root = zarr.open('trajectories5.zarr', mode='a')
     else:
-        root = zarr.open('trajectories4.zarr', mode='w')
+        root = zarr.open('trajectories5.zarr', mode='w')
 
     if not(args.append):
         # write new
         
         actions_array = root.zeros("actions", shape=(0, 2), chunks=(chunks_size, 2), dtype='float32',
                                     overwrite=False, maxshape=(None, 2))
+        raw_actions_array = root.zeros("raw_actions", shape=(0, 2), chunks=(chunks_size, 2), dtype='float32',
+                            overwrite=False, maxshape=(None, 2))
+        
         rewards_array = root.zeros("rewards", shape=(0, 1), chunks=(chunks_size, 1), dtype='float32',
                                     overwrite=False, maxshape=(None, 1))
         done_array = root.zeros("done", shape=(0, 1), chunks=(chunks_size, 1), dtype='bool',
@@ -78,13 +81,16 @@ def main(args):
         model_names = []
         log_probs = []
         collisions = []
+        raw_actions = []
         print(f"Processing {file}")
         with open(os.path.join(args.input_folder, file), 'rb') as f:
             while True:
                 try:
-                    action, obs, reward, done, truncated, log_prob, timestep, model_name, collision = pkl.load(f)
+                    action, obs, reward, done, truncated, log_prob, timestep, model_name, collision, raw_action = pkl.load(f)
                     actions.append(action[0])
+                    raw_actions.append(raw_action[0])
                     for key, value in obs.items():
+                        # print(key)
                         if key == 'lidar_occupancy':
                             obs_lists[key].append(value) #TODO! fix this inconsistency
                         else:
@@ -113,6 +119,7 @@ def main(args):
                 root['observations'][key] = array
         if args.append:
             root["actions"].append(np.array(actions))
+            root["raw_actions"].append(np.array(raw_actions))
             root["rewards"].append(np.array(rewards))
             root["done"].append(np.array(dones))
             root["truncated"].append(np.array(truncates))
@@ -124,6 +131,7 @@ def main(args):
             print(root["model_name"][-1])
         else:
             actions = np.array(actions)
+            raw_actions = np.array(raw_actions)
             rewards = np.array(rewards)
             dones = np.array(dones)
             truncated = np.array(truncates)
@@ -132,6 +140,7 @@ def main(args):
             print(model_names[-1])
             # model_names = np.char.add(model_names, "_____")
             root["actions"] = actions
+            root["raw_actions"] = raw_actions
             root["rewards"] = rewards
             root["done"] = dones
             root["truncated"] = truncated

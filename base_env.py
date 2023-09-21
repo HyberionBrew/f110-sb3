@@ -3,7 +3,7 @@ import f110_gym
 #from gymnasium.wrappers import RescaleAction
 from code.wrappers import F110_Wrapped, ThrottleMaxSpeedReward, FixSpeedControl, RandomStartPosition, FrameSkip
 from code.wrappers import MaxLaps, FlattenAction,SpinningReset,ProgressObservation, LidarOccupancyObservation, VelocityObservationSpace
-from code.wrappers import DownsampleLaserObservation
+from code.wrappers import DownsampleLaserObservation, PoseStartPosition
 from stable_baselines3.common.env_checker import check_env
 from single_agent_env import ActionDictWrapper
 from code.wrappers import ProgressReward
@@ -87,6 +87,8 @@ class RescaleAction2(gym.ActionWrapper, gym.utils.RecordConstructorArgs):
         Returns:
             The rescaled action
         """
+        #print(action)
+        #print(self.min_action)
         assert np.all(np.greater_equal(action, self.min_action)), (
             action,
             self.min_action,
@@ -191,11 +193,13 @@ class AugmentObservationsPreviousAction(gym.Wrapper):
         return obs, reward, done, truncated, info
     
     def reset(self, seed = None, options=None):
+        #print("options 2")
+        #print(options)
         obs, info = self.env.reset(seed=seed, options=options)
         self.previous_action = np.zeros((self.action_space.shape), dtype=self.action_space.dtype)
         
         if len(self.previous_action[0]) == 2:
-            self.previous_action[0][1] = self.inital_velocity
+            self.previous_action[0][1] = options["velocity"] #self.inital_velocity
         obs['previous_action'] = self.previous_action
         return obs, info
 
@@ -318,7 +322,25 @@ class NormalizePreviousAction(gym.ObservationWrapper):
         # print("obs", obs)
         return obs
     
+class RandomResetVelocity(gym.Wrapper):
+    def __init__(self, env, min_vel=0.0, max_vel=2.0, eval=False):
+        super(RandomResetVelocity, self).__init__(env)
+        self.min_vel = min_vel
+        self.max_vel = max_vel 
+        self.eval = eval
+    def reset(self, seed= None, options=None):
+        if options is None:
+            options = {}
+        
+        if "velocity" not in options:
+            # Randomly sample velocity between min_vel and max_vel
+            random_velocity = np.random.uniform(self.min_vel, self.max_vel)
+            options['velocity'] = random_velocity
+        if self.eval:
+            options['velocity'] = 0.0
+        return super().reset(seed=seed, options=options)
 
+import warnings
 class AccelerationAndDeltaSteeringWrapper(gym.ActionWrapper):
     def __init__(self, env, max_acceleration, max_delta_steering, min_velocity, max_velocity, min_steering, max_steering, inital_velocity=0.5):
         super(AccelerationAndDeltaSteeringWrapper, self).__init__(env)
@@ -339,11 +361,22 @@ class AccelerationAndDeltaSteeringWrapper(gym.ActionWrapper):
         self.min_steering = min_steering
         self.max_steering = max_steering
 
-    def reset(self, **kwargs):
+    def reset(self, seed=None, options=None):
         # Reset the current state when the environment is reset
-        self.current_velocity = self.inital_velocity
+        #print(options)
+        #print("------")
+        if options is None:
+            options = {} 
+        
+        if "poses" in options: 
+            warnings.warn("Only velocity will be set")   
+        if "velocity" not in options:
+            warnings.warn("Starting with velocity 0")
+            options["velocity"] = 0.0
+
+        self.current_velocity = options["velocity"]
         self.current_steering = 0.0
-        return super().reset(**kwargs)
+        return super().reset( seed=None, options=options)
 
     def action(self, action):
         # Extract acceleration and delta steering from the action
@@ -418,6 +451,7 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
                   random_start=True,
                   train_random_start = True,
                   eval=False, use_org_reward=False, 
+                  pose_start = False,
                   reward_config = standard_config, acceleration =False):
     """
     Setup and return the base environment with required wrappers.
@@ -437,7 +471,10 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
             env = RandomStartPosition(env)
     else:
         # in this case we always start at 0 (first point in raceline)
-        env = RandomStartPosition(env, increased=[0,1], likelihood = 1.0)
+        if pose_start:
+            env = PoseStartPosition(env)
+        else:
+            env = RandomStartPosition(env, increased=[0,1], likelihood = 1.0)
 
     # Clip the velocity
     # env = ReduceSpeedActionSpace(env, 0.5, 1.8)
@@ -457,7 +494,7 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     env = MixedGymReward(env, **reward_config)
     # print(env.action_space)
     env = AppendActionToInfo(env, name="action_raw")
-    env = AugmentObservationsPreviousAction(env, inital_velocity=0.7)
+    env = AugmentObservationsPreviousAction(env, inital_velocity=2.0)
     
     # convert to delta steering and acceleration
 
@@ -470,7 +507,8 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     env = DownsampleLaserObservation(env, subsample=SUBSAMPLE)
     env = gym.wrappers.FilterObservation(env, filter_keys=["lidar_occupancy","linear_vels_x", 
                                                            "linear_vels_y", "ang_vels_z", "previous_action", # ])
-                                                           "poses_x", "poses_y", "poses_theta", "progress"]) #, "angular_vels_z"])
+                                                           "poses_x", "poses_y", "poses_theta", 
+                                                           "progress_sin", "progress_cos"]) #, "angular_vels_z"])
     
 
 
@@ -488,13 +526,14 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     env = AccelerationAndDeltaSteeringWrapper(env, max_acceleration=0.05, max_delta_steering=0.05,
                                             min_velocity=env.action_space.low[0][1], max_velocity=env.action_space.high[0][1],
                                             min_steering=env.action_space.low[0][0], max_steering=env.action_space.high[0][0],
-                                            inital_velocity=0.7)
+                                            inital_velocity=2.0)
     env = AppendActionToInfo(env, name="action_delta")
     env = RescaleAction2(env, min_action=-1.0,max_action=1.0)
     
     env = ClipAction(env)
     # add a timelimit TODO! maybe not include here
-    env = TimeLimit(env, max_episode_steps=5000)
+    env = TimeLimit(env, max_episode_steps=1000)
+    env = RandomResetVelocity(env, min_vel=0.8, max_vel=1.5, eval=False)
     return env
 
 from stable_baselines3 import PPO
