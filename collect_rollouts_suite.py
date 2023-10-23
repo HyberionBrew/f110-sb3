@@ -11,7 +11,7 @@ def extract_timestamp(file_name):
 
 def run_command(model_path, model_name):
     """Function to run the command."""
-    cmd = f"python collect_rollouts.py --model_path={model_path} --norender --record --timesteps=50_000 --model_name={model_name}"
+    cmd = f"python collect_rollouts.py --model_path={model_path} --norender --record --timesteps=100_000 --model_name={model_name}"
     subprocess.run(cmd, shell=True)
 
 base_dir = "/home/fabian/f110_rl/f110-sb3/logs102"

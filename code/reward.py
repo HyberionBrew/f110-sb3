@@ -115,21 +115,33 @@ class RacelineDeltaReward(object):
     def __init__(self, track: Track) -> None:
         xs = track.raceline.xs
         ys = track.raceline.ys
+        velxs = track.raceline.velxs
         self.centerline = np.stack((xs, ys), axis=-1)
         self.largest_delta_observed = 2.0
 
-    def __call__(self, pose: Tuple[float, float]) -> float:
+    def __call__(self, pose: Tuple[float, float], velocity: float) -> float:
         # calculate the squared distances to all points on the raceline
         distances = np.sum((self.centerline - np.array(pose))**2, axis=1)
         # get the minimum squared distance
         min_distance_squared = np.min(distances)
         # take the square root to get the actual minimum distance
         min_distance = np.sqrt(min_distance_squared)
+
         if min_distance > self.largest_delta_observed:
             self.largest_delta_observed = min_distance
 
         # normalize the min_distance
         reward = min_distance / self.largest_delta_observed
+        
+        # add the velocity
+        arg_min_point = np.argmin(distances)
+        target_velocity = self.velxs[arg_min_point]
+        vel_reward = (velocity-target_velocity)**2
+        # cap vel_reward to be at most 1
+        vel_reward = np.clip(vel_reward,0,1)
+        # add up vel_reward and reward
+        reward = (vel_reward + reward) / 2
+
         # the negative of the distance, meaning closer to the line is better
         reward = 1.0 - reward
         reward = reward ** 2
