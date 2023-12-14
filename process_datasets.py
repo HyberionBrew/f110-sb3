@@ -11,11 +11,13 @@ parser.add_argument('--input_folder', type=str, default='datasets', help='Loggin
 parser.add_argument('--file', type=str, default=None, help='Specific File to process')
 parser.add_argument('--noappend', action='store_false', 
                     default=True,dest='append', help='Whether to append to existing file')
+parser.add_argument('--dataset', type=str, default="dataset", help="dataset name")
 args = parser.parse_args()
 
 
-obs_keys = ['poses_x', 'poses_y', 'poses_theta', 'linear_vels_x', 
-            'linear_vels_y', 'ang_vels_z', 'progress_sin','progress_cos','lidar_occupancy', 
+obs_keys = ['poses_x', 'poses_y', 'linear_vels_x', 
+            'linear_vels_y', 'ang_vels_z', 'theta_sin', 
+            'theta_cos','progress_sin','progress_cos','lidar_occupancy', 
             'previous_action']
 
 def main(args):
@@ -30,9 +32,9 @@ def main(args):
     chunks_size = 10000 
     # Create an extendible array named "actions"
     if args.append:
-        root = zarr.open('trajectories5.zarr', mode='a')
+        root = zarr.open(f"{args.dataset}.zarr", mode='a')
     else:
-        root = zarr.open('trajectories5.zarr', mode='w')
+        root = zarr.open(f"{args.dataset}.zarr", mode='w')
 
     if not(args.append):
         # write new
@@ -63,7 +65,10 @@ def main(args):
             if key not in obs_group:
                 obs_group.create_group(key)
 
-
+        infos_group = root.create_group('infos')
+        for key in ['lidar_timestamp', 'pose_timestamp']:
+            if key not in infos_group:
+                infos_group.create_group(key)
     # Create an extendible array named "observations"
 
     # extract from pickle array
@@ -82,11 +87,12 @@ def main(args):
         log_probs = []
         collisions = []
         raw_actions = []
+        infos = {key: [] for key in ['lidar_timestamp', 'pose_timestamp']}
         print(f"Processing {file}")
         with open(os.path.join(args.input_folder, file), 'rb') as f:
             while True:
                 try:
-                    action, obs, reward, done, truncated, log_prob, timestep, model_name, collision, raw_action = pkl.load(f)
+                    action, obs, reward, done, truncated, log_prob, timestep, model_name, collision, raw_action, info = pkl.load(f)
                     actions.append(action[0])
                     raw_actions.append(raw_action[0])
                     for key, value in obs.items():
@@ -95,6 +101,8 @@ def main(args):
                             obs_lists[key].append(value) #TODO! fix this inconsistency
                         else:
                             obs_lists[key].append(value[0])
+                    for key, value in info.items():
+                        infos[key].append(value)
                     rewards.append(reward)
                     dones.append(done)
                     truncates.append(truncated)
@@ -117,6 +125,15 @@ def main(args):
                 root['observations'][key].append(array)
             else:
                 root['observations'][key] = array
+        for key in infos:
+            infos[key] = np.array(infos[key])
+        for key, array in infos.items():
+            if args.append:
+                root['infos'][key].append(array)
+            else:
+                root['infos'][key] = array
+        
+        
         if args.append:
             root["actions"].append(np.array(actions))
             root["raw_actions"].append(np.array(raw_actions))

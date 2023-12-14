@@ -90,7 +90,7 @@ import datetime
 def train(args):
     
     reward_config = {
-        "collision_penalty": -100.0,
+        "collision_penalty": -50.0,
         "progress_weight": args.progress_weight, # 1.0
         "raceline_delta_weight": args.raceline_delta_weight, # 0.5
         "velocity_weight": args.velocity_weight, # 0.5
@@ -160,7 +160,7 @@ def train(args):
     # eval_env = TimeLimit(eval_env, max_episode_steps=500)
     # eval_env = Monitor(eval_env, args.logdir)
     # eval_env = RecordVideo(eval_env, f"{args.logdir}/videos", episode_trigger = lambda episode_number: True)
-    eval_freq = 25_000
+    eval_freq = 50_000
     eval_callback = EvalCallback(eval_env, best_model_save_path=str(f"{args.logdir}/models"), n_eval_episodes=10,
                                  log_path=str(f"{args.logdir}/evals"), eval_freq=eval_freq//args.num_processes,
                                  deterministic=True, render=False)

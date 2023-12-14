@@ -31,7 +31,7 @@ for arg in args:
     weights[arg] = 1.0
     
     # Construct the command
-    command = ["python", "train.py","--num_processes","4","--logdir", f"logs102/{arg}", "--total_timesteps", "300_000"]
+    command = ["python", "train.py","--num_processes","12","--logdir", f"logs102/{arg}", "--total_timesteps", "300_000"]
     for name, value in weights.items():
         command.extend([f"--{name}", str(value)])
     

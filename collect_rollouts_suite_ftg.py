@@ -21,6 +21,7 @@ def run_job(speed_multiplier, gap_blocker):
     num_timesteps = 50_000 # 100 rollouts
     command = (
         f"python collect_rollouts_ftg.py --speed_multiplier={speed_multiplier} --gap_blocker={gap_blocker} --norender --record --timesteps={num_timesteps}"
+        f" --dataset=datasets1112"
     )
     
     # Modify log file path to include discount value and run number
