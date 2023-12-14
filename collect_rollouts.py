@@ -58,10 +58,10 @@ def main(args):
     model_name = args.model_name
     episode = 0
     timesteps = 0
-    with open(f"datasets921/{args.model_name}", 'wb') as f:
+    with open(f"datasets1711/{args.model_name}", 'wb') as f:
         pass
 
-
+    print("next agent")
     while timesteps < args.timesteps:
 
         obs, _ = eval_env.reset()
@@ -69,9 +69,9 @@ def main(args):
         done = False
         truncated = False
         episode += 1
-        print("Episode:", episode)
+        #print("Episode:", episode)
         rewards = []
-        print(timesteps)
+        #print(timesteps)
         episode_data = []
         import time 
         start = time.time()
@@ -94,42 +94,39 @@ def main(args):
         while not done and not truncated:
             # print(obs)
             timesteps += 1
-            # remove key poses_theta from obs
-            # del obs["poses_theta"] # TODO! remove bandaid
-            # action, _ = model.predict(obs) #deterministic=True)
-            tensor_obs = model.policy.obs_to_tensor(obs)[0]
-            #print("...")
-            #print(action)
-            #print(tensor_obs)
-            obs, reward, done, truncated, info = eval_env.step(action)
-            # print(obs)
 
+            obs, reward, done, truncated, info = eval_env.step(action)
+            tensor_obs = model.policy.obs_to_tensor(obs)[0]
+            # print(obs)
+            #done = True
+            #truncated = True
             with torch.no_grad():
-                # print(tensor_obs)
+                #print("observation_model_input:", tensor_obs)
                 action, _, log_prob = model.policy.forward(tensor_obs, deterministic=args.deterministic)# [0]
             # print(action)
-            action = action.squeeze(0).detach().numpy()
-            log_prob = float(log_prob.detach().numpy()[0])
+            #print("action, model out", action)
+            action = action.cpu().squeeze(0).detach().numpy()
+            log_prob = float(log_prob.cpu().detach().numpy()[0])
             # print(action)
-
+            new_infos = dict()
+            new_infos["lidar_timestamp"] = 0.0
+            new_infos["pose_timestamp"] = 0.0
             if args.record:
                 # record values into zarr directory
                 # print(info["observations"])
                 # exit()
-                with open(f"datasets921/{args.model_name}", 'ab') as f:
+                with open(f"datasets1711/{args.model_name}", 'ab') as f:
                     #if timesteps > args.timesteps:
                     #    done = True
                     #    truncated = True
                     
-                    pkl.dump((action, info["observations"], float(reward), done, truncated, log_prob, timesteps, model_name, info["collision"], info["action_raw"]), f)
-            #if timesteps > args.timesteps:
-            #    break
-            
-            # action = action[0]
-            # obs, reward, done, truncated, info = eval_env.step(action)
-            # print(obs)
-            # print(info)
-            # exit()
+                    pkl.dump((action, info["observations"], 
+                              float(reward), done, 
+                              truncated, log_prob, 
+                              timesteps, model_name, 
+                              info["collision"], info["action_raw"], new_infos), f)
+            #print((action, info["observations"], float(reward), done, truncated, log_prob, timesteps, model_name, info["collision"], info["action_raw"]))
+            #print("---------------")
             progress_sin.append(info["observations"]["progress_sin"])
             progress_cos.append(info["observations"]["progress_cos"])
             steerings.append(info["action_raw"][0][0])
@@ -158,6 +155,8 @@ def main(args):
             # TODO! remove this
             #if timesteps > args.timesteps:
             #    break
+        #TODO! remove again
+        #break
         # end = time.time()
         #print("Time:", end-start)
 if __name__ == "__main__":

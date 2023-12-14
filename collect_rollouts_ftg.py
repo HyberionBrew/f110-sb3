@@ -11,7 +11,8 @@ import argparse
 from gymnasium.wrappers import TimeLimit
 from stable_baselines3 import PPO
 from ftg_agents.agents_numpy import StochasticContinousFTGAgent
-
+from ftg_agents.agents_numpy import DoubleAgentWrapper
+from ftg_agents.agents_numpy import SwitchingAgentWrapper
 parser = argparse.ArgumentParser(description='Your script description')
 
 parser.add_argument('--timesteps', type=int, default=10_000, help='Number of timesteps to run for')
@@ -29,6 +30,8 @@ parser.add_argument('--model_name', type=str, default='progress', help='The mode
 parser.add_argument('--deterministic', action='store_true', default=False, help='Whether to use deterministic actions')
 parser.add_argument('--speed_multiplier', type=float, default=1.0, help='Size of speed multiplier higher is slower')
 parser.add_argument('--gap_blocker', type=int, default=2, help='FTG gap block')
+parser.add_argument('--dataset', type=str, default="datasets", help="dataset name")
+parser.add_argument('--std', type=float, default=0.3, help="std of the noise")
 args = parser.parse_args()
 
 eval_config = {
@@ -59,11 +62,15 @@ def main(args):
                 max_vel=0.0,)
     eval_env = TimeLimit(eval_env, max_episode_steps=500)
 
-    model = StochasticContinousFTGAgent(gap_blocker = args.gap_blocker, speed_multiplier=args.speed_multiplier) #PPO.load(args.model_path)
-    model_name = str(model) #args.model_name
+    model1 = StochasticContinousFTGAgent(gap_blocker = args.gap_blocker, speed_multiplier=0.5, std=args.std) #PPO.load(args.model_path)
+    model2 = StochasticContinousFTGAgent(gap_blocker = args.gap_blocker, speed_multiplier=5.0, std=args.std) #PPO.load(args.model_path)
+    #model = DoubleAgentWrapper(model2, model1, 100)
+    model = SwitchingAgentWrapper(model1, model2)
+    #model = model1
+    model_name = "switching_slowest_fastest" #str(model) #args.model_name
     episode = 0
     timesteps = 0
-    with open(f"datasets0512/{model_name}", 'wb') as f:
+    with open(f"{args.dataset}/{model_name}", 'wb') as f:
         pass
 
     print("next agent")
@@ -84,6 +91,7 @@ def main(args):
         steerings = []
         vels = []
         progress_sin = []
+        log_probs=[]
         progress_cos = []
         #tensor_obs = model.policy.obs_to_tensor(obs)[0]
         #print("...")
@@ -94,26 +102,28 @@ def main(args):
             #action, _, log_prob = model.policy.forward(tensor_obs, deterministic=args.deterministic)# [0]
             #action = action[0].cpu().numpy()
             action = np.array([0.0,0.0]) # just a zero zero action to get the juicy infos
-        
+
         # eval_env.render()
+        episode_timestep = 0
         while not done and not truncated:
             # print(obs)
             timesteps += 1
-
+            episode_timestep += 1
             obs, reward, done, truncated, info = eval_env.step(action)
             #
             # print(obs)
             #done = True
             #truncated = True
             with torch.no_grad():
-                #print("observation_model_input:", tensor_obs)
-                #tensor_obs = model.policy.obs_to_tensor(obs)[0]
-                 _, action, log_prob = model(obs)
-                #action, _, log_prob = model.policy.forward(tensor_obs, deterministic=args.deterministic)# [0]
-                # action is numpy add action dim at 0
-                action = np.expand_dims(action, axis=0)
+
+                # add dimension to lidar and previous action
+                for key in obs.keys():
+                    #if key == "lidar_occupancy" or key == "previous_action":
+                    obs[key] = np.expand_dims(obs[key], axis=0)
+                _, action, log_prob = model(np.array([episode_timestep]), obs)
+                #action = np.expand_dims(action, axis=0)
             log_prob = float(log_prob)
-            # print(action)
+            #print(action)
             new_infos = dict()
             new_infos["lidar_timestamp"] = 0.0
             new_infos["pose_timestamp"] = 0.0
@@ -121,7 +131,7 @@ def main(args):
                 # record values into zarr directory
                 # print(info["observations"])
                 # exit()
-                with open(f"datasets0512/{model_name}", 'ab') as f:
+                with open(f"{args.dataset}/{model_name}", 'ab') as f:
                     #if timesteps > args.timesteps:
                     #    done = True
                     #    truncated = True
@@ -133,6 +143,7 @@ def main(args):
                               info["collision"], info["action_raw"], new_infos), f)
             #print((action, info["observations"], float(reward), done, truncated, log_prob, timesteps, model_name, info["collision"], info["action_raw"]))
             #print("---------------")
+            log_probs.append(log_prob)
             progress_sin.append(info["observations"]["progress_sin"])
             progress_cos.append(info["observations"]["progress_cos"])
             steerings.append(info["action_raw"][0][0])
@@ -143,12 +154,25 @@ def main(args):
             #print(info["observations"])
             #if timesteps == 4:
             #    exit()
+
+            # TODO! remove this
             if args.render:
                 eval_env.render()
                 if done or truncated:
                     #print(timesteps)
                     #print("Lap done")
                     #print("R:", reward)
+                    discounts = np.array([0.99**i for i in range(len(rewards))])
+                    discounted = np.array(rewards) * discounts
+                    print("return:" , np.sum(discounted))
+                    plt.plot(discounted)
+                    plt.xlabel("timesteps")
+                    plt.ylabel("discounted reward")
+                    plt.title("discounted reward vs timesteps")
+                    plt.show()
+                    plt.plot(log_probs)
+                    plt.title("log_prob")
+                    plt.show()
                     plt.plot(progress_sin)
                     plt.plot(progress_cos)
                     plt.show()
@@ -157,6 +181,7 @@ def main(args):
                     plt.plot(vels)
                     plt.show()
                     plt.plot(rewards)
+                    plt.title("rewards")
                     plt.show()
             # TODO! remove this
             #if timesteps > args.timesteps:

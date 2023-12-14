@@ -123,6 +123,8 @@ class NormalizeVelocityObservation(gym.ObservationWrapper):
         return obs
 
 
+
+
 class ProgressObservation(gym.ObservationWrapper):
     def __init__(self, env):
         super(ProgressObservation, self).__init__(env)
@@ -149,6 +151,7 @@ class ProgressObservation(gym.ObservationWrapper):
         obs['progress_sin'] = np.sin(angle).astype(np.float32)
         obs['progress_cos'] = np.cos(angle).astype(np.float32)
         return obs
+        
     def reset(self, seed=None, options=None):
         obs, info = self.env.reset(seed=seed, options=options)
         pose = np.array([obs['poses_x'][0], obs['poses_y'][0]])
@@ -473,7 +476,7 @@ class MinSpeedReset(gym.Wrapper):
         self.minSpeed = minSpeed
     def step(self,action):
         observation, ac, done, truncated , info = self.env.step(action)
-        print(observation['linear_vels_x'])
+        # print(observation['linear_vels_x'])
         if abs(observation['linear_vels_x']) + abs(observation['linear_vels_y']) < self.maxTheta:
             done = True
         return observation, ac, done, truncated, info
@@ -499,7 +502,7 @@ class F110_Wrapped(gym.Wrapper):
         else:
             self.action_space = spaces.Box(low=np.array(
                 [-1.0, -1.0]), high=np.array([1.0, 1.0]), dtype=np.float32)
-        print(self.action_space)
+        # print(self.action_space)
         # normalised observations, just take the lidar scans
         self.observation_space = spaces.Box(
             low=-1.0, high=1.0, shape=(1080,), dtype=np.float32)

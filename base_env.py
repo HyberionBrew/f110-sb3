@@ -16,7 +16,7 @@ from gymnasium.spaces import Box
 from typing import Union
 from gymnasium.wrappers import RescaleAction
 from gymnasium.wrappers import ClipAction
-from code.reward import MixedReward
+from f110_orl_dataset.reward import MixedReward
 from gymnasium.wrappers import TimeLimit
 
 class RescaleAction2(gym.ActionWrapper, gym.utils.RecordConstructorArgs):
@@ -189,7 +189,10 @@ class AugmentObservationsPreviousAction(gym.Wrapper):
     def step(self, action):
         obs, reward, done, truncated, info = self.env.step(action)
         obs['previous_action'] = self.previous_action
+        #print("previous action")
+        #print(self.previous_action)
         self.previous_action = action
+        
         return obs, reward, done, truncated, info
     
     def reset(self, seed = None, options=None):
@@ -232,7 +235,7 @@ class MixedGymReward(gym.Wrapper):
         observation, info = self.env.reset(seed=seed, options=options)
         pose = (observation['poses_x'][0], observation['poses_y'][0])
         # print(pose)
-        self.reward.reset(pose)
+        self.reward.reset(pose, options["velocity"])
         return observation, info
 
 class AppendObservationToInfo(gym.Wrapper):
@@ -242,9 +245,12 @@ class AppendObservationToInfo(gym.Wrapper):
     def step(self, action):
         obs, reward, done, truncated, info = self.env.step(action)
         # Add observation to info
+        #print(obs)
+        #print("--------")
         info["observations"] = {}
         for key, value in obs.items():
             info["observations"][key] = value
+
         return obs, reward, done, truncated, info
 
 class AppendActionToInfo(gym.Wrapper):
@@ -264,6 +270,38 @@ def normalize(value, low, high):
 def clip(value, low, high):
     """Clip a value between low and high."""
     return np.clip(value, low, high)
+
+class ThetaObservationContinous(gym.ObservationWrapper):
+    def __init__(self, env):
+        super(ThetaObservationContinous, self).__init__(env)
+        obs_dict = collections.OrderedDict()
+        for k, space in self.observation_space.spaces.items():
+            obs_dict[k] = space
+        obs_dict["theta_sin"] = Box(shape=(1,), low=-1, high=1)
+        obs_dict["theta_cos"] = Box(shape=(1,), low=-1, high=1)
+        self.observation_space = gym.spaces.Dict(obs_dict)
+
+    def observation(self, obs):
+        theta = obs['poses_theta']
+        #print("theta", theta)
+        # clip theta between -2*pi and pi
+        theta = clip(theta, -np.pi*2, np.pi*2)
+        obs['theta_sin'] = np.sin(theta).astype(np.float32)
+        obs['theta_cos'] = np.cos(theta).astype(np.float32)
+        # ensure that the values are between -1 and 1 assert
+        assert np.all((abs(obs['theta_sin']) <= 1))
+        assert np.all((abs(obs['theta_cos']) <= 1))
+        #print(obs)
+        return obs
+
+    def reset(self, seed=None, options=None):
+        obs, info = self.env.reset(seed=seed, options=options)
+        theta = obs['poses_theta']
+        theta = clip(theta, -np.pi*2, np.pi*2)
+        obs['theta_sin'] = np.sin(theta).astype(np.float32)
+        obs['theta_cos'] = np.cos(theta).astype(np.float32)
+        # print("in thetat_obs", obs)
+        return obs, info
 
 class NormalizeVelocityObservation(gym.ObservationWrapper):
     def __init__(self, env, low_vel=-20, high_vel=20):
@@ -311,6 +349,9 @@ class NormalizePreviousAction(gym.ObservationWrapper):
     def observation(self, obs):
         low = self.env.action_space.low
         high = self.env.action_space.high
+        print("----")
+        print(low)
+        print(high)
         # print(high)
         #print(low, high)
         #print("obs", obs["previous_action"])
@@ -338,6 +379,7 @@ class RandomResetVelocity(gym.Wrapper):
             options['velocity'] = random_velocity
         if self.eval:
             options['velocity'] = 0.0
+
         return super().reset(seed=seed, options=options)
 
 import warnings
@@ -380,6 +422,7 @@ class AccelerationAndDeltaSteeringWrapper(gym.ActionWrapper):
 
     def action(self, action):
         # Extract acceleration and delta steering from the action
+        #print(action)
         delta_steering, acceleration = action[0]
 
         # Compute the new absolute values
@@ -389,6 +432,8 @@ class AccelerationAndDeltaSteeringWrapper(gym.ActionWrapper):
         # Ensure the absolute values are within safe bounds
         self.current_velocity = np.clip(self.current_velocity, self.min_velocity, self.max_velocity)
         self.current_steering = np.clip(self.current_steering, self.min_steering, self.max_steering)
+        #print(self.current_steering)
+        #print(self.current_velocity)
         # print(self.current_steering)
         # print(self.current_velocity)
         # Return the transformed action (absolute values)
@@ -403,13 +448,16 @@ class NormalizeObservations(gym.ObservationWrapper):
         lidar_space = self.observation_space["lidar_occupancy"]
         self.observation_space = self.normalizer.new_state_space
         self.observation_space["lidar_occupancy"] = lidar_space
+        #print("dwdw")
+        #print(self.observation_space)
     def observation(self, obs):
         #print("og")
         #print(obs)
         obs = self.normalizer.normalize_obs_batch(obs)
+        # assert that thetas are contained
+        assert("theta_sin" in obs)
         #print(obs)
         #print("new")
-        #print(obs)
         return obs
 
 
@@ -444,7 +492,7 @@ standard_config = {
     "normalize": False,
 }
 
-from config import VEL_LOW, VEL_HIGH, MAX_VEL, MIN_VEL, \
+from f110_orl_dataset.config import VEL_LOW, VEL_HIGH, MAX_VEL, MIN_VEL, \
                     POSE_LOW, POSE_HIGH, SUBSAMPLE, POSE_THETA_LOW, POSE_THETA_HIGH
 
 def make_base_env(map= "Infsaal", fixed_speed=None, 
@@ -490,7 +538,9 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     # print(env.action_space.low[0])
     
     # make it 20 HZ from 100 HZ
-    env = FrameSkip(env, skip=5) 
+    env = FrameSkip(env, skip=5)
+    env = DownsampleLaserObservation(env, subsample=SUBSAMPLE)
+    
     env = MixedGymReward(env, **reward_config)
     # print(env.action_space)
     env = AppendActionToInfo(env, name="action_raw")
@@ -504,18 +554,22 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     
     # add and filter observations
     env = ProgressObservation(env)
-    env = DownsampleLaserObservation(env, subsample=SUBSAMPLE)
+    env = ThetaObservationContinous(env)
+    
     env = gym.wrappers.FilterObservation(env, filter_keys=["lidar_occupancy","linear_vels_x", 
                                                            "linear_vels_y", "ang_vels_z", "previous_action", # ])
-                                                           "poses_x", "poses_y", "poses_theta", 
+                                                           "poses_x", "poses_y", 
+                                                           # "poses_theta",
+                                                           "theta_cos",  "theta_sin", 
                                                            "progress_sin", "progress_cos"]) #, "angular_vels_z"])
-    
+
 
 
     # append all observations to the info dict
     env = AppendObservationToInfo(env)
     
-
+    #print("1")
+    #print(env.observation_space)
     # Normalize the whole observation space
     env = NormalizeObservations(env)
     #env = NormalizePreviousAction(env)
@@ -523,6 +577,8 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     #env = NormalizePose(env, low=POSE_LOW, high=POSE_HIGH, 
     #                   theta_low=POSE_THETA_LOW, theta_high=POSE_THETA_HIGH)
     # Change action space
+    #print("2")
+    #print(env.observation_space)
     env = AccelerationAndDeltaSteeringWrapper(env, max_acceleration=0.05, max_delta_steering=0.05,
                                             min_velocity=env.action_space.low[0][1], max_velocity=env.action_space.high[0][1],
                                             min_steering=env.action_space.low[0][0], max_steering=env.action_space.high[0][0],
@@ -534,6 +590,8 @@ def make_base_env(map= "Infsaal", fixed_speed=None,
     # add a timelimit TODO! maybe not include here
     env = TimeLimit(env, max_episode_steps=1000)
     env = RandomResetVelocity(env, min_vel=0.8, max_vel=1.5, eval=False)
+    #print("---")
+    #print(env.observation_space)
     return env
 
 from stable_baselines3 import PPO
